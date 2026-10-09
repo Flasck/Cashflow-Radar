@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: cashflow-radar-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: cashflow_radar
+      POSTGRES_USER: cashflow
+      POSTGRES_PASSWORD: cashflow_dev_password
+
+    ports:
+      - '5433:5432'
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U cashflow -d cashflow_radar']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
