@@ -15,5 +15,7 @@ class User(Base):
 
     role: Mapped[str] = mapped_column(Enum("treasurer", "cfo", name="user_role"))
 
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     def __repr__(self) -> str:
         return f"<User(id={self.id}, full_name={self.full_name}, email={self.email}, role={self.role})>"

@@ -13,8 +13,8 @@ async def create_category(session: AsyncSession, name: str) -> Category:
     return category
 
 
-async def get_category(session: AsyncSession, catigory_id: int) -> Category | None:
-    return await session.get(Category, catigory_id)
+async def get_category(session: AsyncSession, category_id: int) -> Category | None:
+    return await session.get(Category, category_id)
 
 
 async def get_category_by_name(session: AsyncSession, name: str) -> Category | None:
