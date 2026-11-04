@@ -1,123 +1,152 @@
 from collections.abc import Sequence
 from datetime import date
 from decimal import Decimal
+from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from app.models.split import TransactionSplit
+from app.models.category import Category
 from app.models.transaction import Transaction
+
+UNSET: Any = object()
 
 
 async def create_transaction(
     session: AsyncSession,
+    company_id: int,
     operation_date: date,
     amount: Decimal,
     direction: str,
+    category_id: int | None = None,
     purpose: str | None = None,
 ) -> Transaction:
-    transaction = Transaction(
+    tx = Transaction(
+        company_id=company_id,
         operation_date=operation_date,
         amount=amount,
         direction=direction,
+        category_id=category_id,
         purpose=purpose,
     )
-    session.add(transaction)
+    session.add(tx)
     await session.flush()
-    return transaction
+    return tx
 
 
 async def get_transaction(
-    session: AsyncSession, transaction_id: int
+    session: AsyncSession,
+    company_id: int,
+    transaction_id: int,
 ) -> Transaction | None:
-    return await session.get(Transaction, transaction_id)
-
-
-async def get_transaction_with_splits(
-    session: AsyncSession, transaction_id: int
-) -> Transaction | None:
-    stmt = (
-        select(Transaction)
-        .options(
-            selectinload(Transaction.splits).selectinload(TransactionSplit.category)
-        )
-        .where(Transaction.id == transaction_id)
+    stmt = select(Transaction).where(
+        Transaction.company_id == company_id,
+        Transaction.id == transaction_id,
     )
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
 
 
-async def list_transactions(session: AsyncSession) -> Sequence[Transaction]:
-    stmt = select(Transaction).order_by(Transaction.operation_date, Transaction.id)
-    result = await session.execute(stmt)
-    return result.scalars().all()
-
-
-async def list_transactions_with_splits(
+async def get_transaction_with_category(
     session: AsyncSession,
-) -> Sequence[Transaction]:
-    stmt = (
-        select(Transaction)
-        .options(
-            selectinload(Transaction.splits).selectinload(TransactionSplit.category)
-        )
-        .order_by(Transaction.operation_date, Transaction.id)
-    )
-    result = await session.execute(stmt)
-    return result.scalars().all()
-
-
-async def update_transaction_purpose(
-    session: AsyncSession, transaction_id: int, purpose: str | None
-) -> Transaction | None:
-    transaction = await get_transaction(session, transaction_id)
-    if transaction is None:
-        return None
-    transaction.purpose = purpose
-    await session.flush()
-    return transaction
-
-
-async def delete_transaction(session: AsyncSession, transaction_id: int) -> bool:
-    transaction = await get_transaction(session, transaction_id)
-    if transaction is None:
-        return False
-    await session.delete(transaction)
-    await session.flush()
-    return True
-
-
-async def add_split(
-    session: AsyncSession,
+    company_id: int,
     transaction_id: int,
-    category_id: int,
-    allocated_amount: Decimal,
-) -> TransactionSplit:
-    split = TransactionSplit(
-        transaction_id=transaction_id,
-        category_id=category_id,
-        allocated_amount=allocated_amount,
-    )
-    session.add(split)
-    await session.flush()
-    return split
-
-
-async def check_splits_total(session: AsyncSession, transaction_id: int) -> bool:
-    transaction = await get_transaction(session, transaction_id)
-    if transaction is None:
-        raise ValueError(f"Операция id={transaction_id} не найдена")
-
-    stmt = select(TransactionSplit).where(
-        TransactionSplit.transaction_id == transaction_id
+) -> tuple[Transaction, str | None] | None:
+    stmt = (
+        select(Transaction, Category.name)
+        .outerjoin(Category, Category.id == Transaction.category_id)
+        .where(
+            Transaction.company_id == company_id,
+            Transaction.id == transaction_id,
+        )
     )
     result = await session.execute(stmt)
-    splits = result.scalars().all()
+    row = result.first()
+    if row is None:
+        return None
+    return row[0], row[1]
 
-    total = sum((s.allocated_amount for s in splits), Decimal("0.00"))
-    if total != transaction.amount:
-        raise ValueError(
-            f"Сумма частей ({total}) не равна сумме операции ({transaction.amount})"
-        )
+
+async def list_transactions(
+    session: AsyncSession,
+    company_id: int,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    direction: str | None = None,
+    category_id: int | None = None,
+    uncategorized: bool = False,
+    page: int = 1,
+    page_size: int = 50,
+) -> tuple[Sequence[tuple[Transaction, str | None]], int]:
+    base_conditions = [Transaction.company_id == company_id]
+
+    if date_from is not None:
+        base_conditions.append(Transaction.operation_date >= date_from)
+    if date_to is not None:
+        base_conditions.append(Transaction.operation_date <= date_to)
+    if direction is not None:
+        base_conditions.append(Transaction.direction == direction)
+    if uncategorized:
+        base_conditions.append(Transaction.category_id.is_(None))
+    elif category_id is not None:
+        base_conditions.append(Transaction.category_id == category_id)
+
+    count_stmt = select(func.count(Transaction.id)).where(*base_conditions)
+    total_result = await session.execute(count_stmt)
+    total = total_result.scalar_one()
+
+    offset = (page - 1) * page_size
+    items_stmt = (
+        select(Transaction, Category.name)
+        .outerjoin(Category, Category.id == Transaction.category_id)
+        .where(*base_conditions)
+        .order_by(Transaction.operation_date.desc(), Transaction.id.desc())
+        .offset(offset)
+        .limit(page_size)
+    )
+    items_result = await session.execute(items_stmt)
+    items = items_result.all()
+
+    return items, total
+
+
+async def update_transaction(
+    session: AsyncSession,
+    company_id: int,
+    transaction_id: int,
+    operation_date: Any = UNSET,
+    amount: Any = UNSET,
+    direction: Any = UNSET,
+    category_id: Any = UNSET,
+    purpose: Any = UNSET,
+) -> Transaction | None:
+    tx = await get_transaction(session, company_id, transaction_id)
+    if tx is None:
+        return None
+
+    if operation_date is not UNSET:
+        tx.operation_date = operation_date
+    if amount is not UNSET:
+        tx.amount = amount
+    if direction is not UNSET:
+        tx.direction = direction
+    if category_id is not UNSET:
+        tx.category_id = category_id
+    if purpose is not UNSET:
+        tx.purpose = purpose
+
+    await session.flush()
+    return tx
+
+
+async def delete_transaction(
+    session: AsyncSession,
+    company_id: int,
+    transaction_id: int,
+) -> bool:
+    tx = await get_transaction(session, company_id, transaction_id)
+    if tx is None:
+        return False
+    await session.delete(tx)
+    await session.flush()
     return True

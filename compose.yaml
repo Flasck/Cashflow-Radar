@@ -1,0 +1,86 @@
+name: cashflow-radar
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: radar
+      POSTGRES_PASSWORD: ${RADAR_DB_PASSWORD:?Run scripts/init-local.ps1 first}
+      POSTGRES_DB: ${RADAR_DB_NAME:-cashflow_radar}
+    ports:
+      - '127.0.0.1:55432:5432'
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    image: cashflow-radar-api:local
+    environment:
+      RADAR_DATABASE_URL: postgresql+asyncpg://radar:${RADAR_DB_PASSWORD:?Run scripts/init-local.ps1 first}@postgres:5432/${RADAR_DB_NAME:-cashflow_radar}
+      RADAR_JWT_SECRET: ${RADAR_JWT_SECRET:?Run scripts/init-local.ps1 first}
+    command: python -m alembic -c backend/alembic.ini upgrade head
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    image: cashflow-radar-api:local
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      RADAR_DATABASE_URL: postgresql+asyncpg://radar:${RADAR_DB_PASSWORD:?Run scripts/init-local.ps1 first}@postgres:5432/${RADAR_DB_NAME:-cashflow_radar}
+      RADAR_JWT_SECRET: ${RADAR_JWT_SECRET:?Run scripts/init-local.ps1 first}
+      RADAR_ALLOWED_ORIGINS: http://localhost:3000
+      FORECAST_GRPC_TARGET: forecast:50051
+      RADAR_SMTP_HOST: ${RADAR_SMTP_HOST:-smtp.mail.ru}
+      RADAR_SMTP_PORT: ${RADAR_SMTP_PORT:-465}
+      RADAR_SMTP_USER: ${RADAR_SMTP_USER:-}
+      RADAR_SMTP_PASSWORD: ${RADAR_SMTP_PASSWORD:-}
+    ports:
+      - '127.0.0.1:8000:8000'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      forecast:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2)",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  forecast:
+    image: cashflow-radar-forecast:local
+    build:
+      context: .
+      dockerfile: forecast_service/Dockerfile
+
+  frontend:
+    image: cashflow-radar-frontend:local
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    environment:
+      RADAR_API_URL: http://api:8000
+    ports:
+      - '127.0.0.1:3000:3000'
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  database:
+    name: ${RADAR_POSTGRES_VOLUME:-cashflow-radar_postgres}
+    external: ${RADAR_POSTGRES_EXTERNAL:-false}

@@ -1,0 +1,35 @@
+{
+  "name": "cashflow-radar-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test lib/*.test.ts"
+  },
+  "dependencies": {
+    "next": "15.5.29",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "3.3.7",
+    "@types/node": "22.13.0",
+    "@types/react": "19.0.0",
+    "@types/react-dom": "19.0.0",
+    "eslint": "9.39.5",
+    "eslint-config-next": "15.5.29",
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "postcss": "8.5.32",
+    "minimatch": "11.0.4",
+    "@eslint/eslintrc": {
+      "minimatch": "3.1.5"
+    }
+  }
+}

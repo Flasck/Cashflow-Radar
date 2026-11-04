@@ -4,5 +4,13 @@ backend/.venv
 .idea/
 .vscode/
 
-.env
-.env.local
+.env*
+**/.env*
+.venv/
+**/.venv/
+frontend/node_modules/
+frontend/.next/
+frontend/tsconfig.tsbuildinfo
+**/.pytest_cache/
+**/.ruff_cache/
+artifacts/

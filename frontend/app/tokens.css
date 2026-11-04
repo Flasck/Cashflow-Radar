@@ -1,0 +1,51 @@
+/* Hallmark · v2.0.0 · theme: Coral (agreed) · app scope */
+/* Critique: dense readable ledger with single cash flow line, tabular numerals and explicit direction */
+
+:root {
+  --color-paper: oklch(97% 0.006 55);
+  --color-paper-2: oklch(94.5% 0.007 55);
+  --color-ink: oklch(21% 0.012 38);
+  --color-muted: oklch(47% 0.013 45);
+  --color-rule: oklch(87% 0.009 55);
+  --color-field-border: oklch(47% 0.013 45);
+  --color-accent: oklch(54% 0.165 29);
+  --color-accent-ink: oklch(98.8% 0.0045 80);
+  --color-focus: oklch(54% 0.17 30);
+  --color-error: oklch(44% 0.16 25);
+  --color-surface-hover: oklch(92% 0.008 55);
+  --color-surface-active: oklch(89% 0.01 55);
+  --color-inflow: oklch(35% 0.12 145);
+  --color-outflow: oklch(35% 0.14 30);
+  --color-inflow-surface: oklch(93% 0.05 145);
+  --color-outflow-surface: oklch(93% 0.06 30);
+  --color-error-surface: oklch(96% 0.04 25);
+  --color-primary-hover: oklch(30% 0.012 38);
+  --color-accent-hover: oklch(48% 0.165 29);
+  --color-danger-hover: oklch(95% 0.05 25);
+  --color-inflow-ink: oklch(25% 0.12 145);
+  --color-inflow-amount: oklch(28% 0.11 145);
+  --color-outflow-ink: oklch(30% 0.14 30);
+  --color-outflow-amount: oklch(32% 0.13 30);
+  --color-warning-rule: oklch(80% 0.12 75);
+  --color-warning-surface: oklch(96% 0.04 75);
+  --color-warning-ink: oklch(30% 0.08 75);
+  --color-success-rule: oklch(80% 0.1 145);
+  --color-success-surface: oklch(96% 0.03 145);
+  --color-success-ink: oklch(25% 0.1 145);
+
+  --font-body:
+    system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 40px;
+  --space-7: 64px;
+
+  --radius-field: 6px;
+  --radius-surface: 8px;
+  --max-width: 1440px;
+}

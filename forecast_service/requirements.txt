@@ -1,0 +1,5 @@
+grpcio==1.85.1
+protobuf==7.36.2
+scikit-learn==1.9.1
+numpy==2.5.4
+scipy==1.18.1

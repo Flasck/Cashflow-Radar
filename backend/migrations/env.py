@@ -1,13 +1,17 @@
 import asyncio
+import os
 from logging.config import fileConfig
 
+import app.models  # noqa: F401
 from alembic import context
+from app.db.connection import Base
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
-import app.models  # noqa: F401
-from app.db.connection import DATABASE_URL, Base
+database_url = os.environ.get("RADAR_DATABASE_URL") or os.environ.get("DATABASE_URL")
+if not database_url:
+    raise RuntimeError("Set RADAR_DATABASE_URL before running Alembic.")
 
 config = context.config
 if config.config_file_name is not None:
@@ -17,7 +21,7 @@ target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=DATABASE_URL,
+        url=database_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -33,7 +37,7 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_async_migrations() -> None:
-    connectable = create_async_engine(DATABASE_URL, poolclass=pool.NullPool)
+    connectable = create_async_engine(database_url, poolclass=pool.NullPool)
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
     await connectable.dispose()
