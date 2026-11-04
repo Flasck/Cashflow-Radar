@@ -15,6 +15,7 @@ from app.crud.transactions import (
 )
 from app.crud.users import create_user, get_user_by_email
 from app.db.connection import SessionFactory, engine
+from app.security import get_password_hash
 
 
 async def seed() -> None:
@@ -23,8 +24,20 @@ async def seed() -> None:
             print("База уже заполнена, повторный запуск пропущен.")
             return
 
-        await create_user(session, "вася", "treasurer@example.com", "treasurer")
-        await create_user(session, "петя", "cfo@example.com", "cfo")
+        await create_user(
+            session,
+            "вася",
+            "treasurer@example.com",
+            "treasurer",
+            password_hash=get_password_hash("treasurer123"),
+        )
+        await create_user(
+            session,
+            "петя",
+            "cfo@example.com",
+            "cfo",
+            password_hash=get_password_hash("cfo123456"),
+        )
 
         cat_rev = await create_category(session, "Выручка")
         cat_rent = await create_category(session, "Аренда")

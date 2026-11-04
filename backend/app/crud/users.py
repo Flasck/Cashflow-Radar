@@ -11,11 +11,13 @@ async def create_user(
     full_name: str,
     email: str,
     role: str,
+    password_hash: str | None = None,
 ) -> User:
     user = User(
         full_name=full_name,
         email=email.strip().lower(),
         role=role,
+        password_hash=password_hash,
     )
     session.add(user)
     await session.flush()
