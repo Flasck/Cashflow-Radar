@@ -11,6 +11,9 @@ import type {
 import { formatMoneyRub, formatNetCfRub } from '@/lib/money'
 import DailyChart from '@/components/DailyChart'
 import CategoryBreakdown from '@/components/CategoryBreakdown'
+import DailySummary from '@/components/DailySummary'
+import Input from '@/components/ui/Input'
+import Select from '@/components/ui/Select'
 
 export const dynamic = 'force-dynamic'
 
@@ -186,9 +189,6 @@ export default async function TransactionsPage({
       <div className='page-header'>
         <div>
           <h1 className='page-title'>Журнал операций</h1>
-          <p className='page-subtitle'>
-            Фактические поступления и выплаты денежных средств
-          </p>
         </div>
 
         {canEdit && (
@@ -228,7 +228,7 @@ export default async function TransactionsPage({
       {/* Filter Toolbar */}
       <form
         method='GET'
-        className='toolbar'
+        className='toolbar journal-filters'
         style={{
           backgroundColor: 'var(--color-paper-2)',
           padding: 'var(--space-3) var(--space-4)',
@@ -249,7 +249,7 @@ export default async function TransactionsPage({
           >
             С
           </label>
-          <input
+          <Input
             id='filter-from'
             type='date'
             name='date_from'
@@ -276,7 +276,7 @@ export default async function TransactionsPage({
           >
             По
           </label>
-          <input
+          <Input
             id='filter-to'
             type='date'
             name='date_to'
@@ -303,7 +303,7 @@ export default async function TransactionsPage({
           >
             Тип
           </label>
-          <select
+          <Select
             id='filter-direction'
             name='direction'
             defaultValue={direction}
@@ -317,7 +317,7 @@ export default async function TransactionsPage({
             <option value=''>Все типы</option>
             <option value='inflow'>Поступления (+)</option>
             <option value='outflow'>Выплаты (−)</option>
-          </select>
+          </Select>
         </div>
 
         <div
@@ -333,7 +333,7 @@ export default async function TransactionsPage({
           >
             Категория
           </label>
-          <select
+          <Select
             id='filter-category'
             name='category_id'
             defaultValue={isUncategorized ? '__uncat__' : validCategoryId}
@@ -351,7 +351,7 @@ export default async function TransactionsPage({
                 {c.name}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
 
         <button
@@ -400,6 +400,20 @@ export default async function TransactionsPage({
             {formatNetCfRub(dailyData.totals.net_cash_flow)}
           </span>
         </div>
+      </div>
+
+      <DailyChart
+        key={`daily:${companyId}:${analyticsQuery}`}
+        items={dailyData.items}
+        companyId={companyId}
+        filters={analyticsQuery.toString()}
+        categories={categories}
+        canEdit={canEdit}
+      />
+
+      <div className='journal-section-heading'>
+        <h2>Все операции</h2>
+        <span>{txData.total} за выбранный период</span>
       </div>
 
       {/* Ledger Table */}
@@ -620,11 +634,11 @@ export default async function TransactionsPage({
         </div>
       )}
 
-      {/* Inline Daily NetCF SVG Chart */}
-      <DailyChart items={dailyData.items} />
-
-      {/* Collapsible Category Breakdown */}
-      <CategoryBreakdown items={catData.items} />
+      <CategoryBreakdown
+        key={`categories:${companyId}:${analyticsQuery}`}
+        items={catData.items}
+      />
+      <DailySummary items={dailyData.items} />
     </main>
   )
 }

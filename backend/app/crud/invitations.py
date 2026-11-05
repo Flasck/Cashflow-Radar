@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import ConflictError
@@ -17,6 +17,30 @@ async def create_invitation(
     role: str,
     expires_at: datetime,
 ) -> Invitation:
+    email = email.strip().lower()
+    now = datetime.now(UTC)
+    await session.execute(
+        update(Invitation)
+        .where(
+            Invitation.company_id == company_id,
+            func.lower(Invitation.email) == email,
+            Invitation.status == "pending",
+            Invitation.expires_at <= now,
+        )
+        .values(status="revoked", responded_at=now)
+    )
+    existing = await session.scalar(
+        select(Invitation.id).where(
+            Invitation.company_id == company_id,
+            func.lower(Invitation.email) == email,
+            Invitation.status == "pending",
+        )
+    )
+    if existing is not None:
+        raise ConflictError(
+            message="Действующее приглашение в эту компанию уже существует",
+            code="INVITATION_EXISTS",
+        )
     invitation = Invitation(
         company_id=company_id,
         email=email.strip().lower(),
@@ -27,6 +51,20 @@ async def create_invitation(
     session.add(invitation)
     await session.flush()
     return invitation
+
+
+async def revoke_pending_invitations(
+    session: AsyncSession, company_id: int, email: str
+) -> None:
+    await session.execute(
+        update(Invitation)
+        .where(
+            Invitation.company_id == company_id,
+            func.lower(Invitation.email) == email.strip().lower(),
+            Invitation.status == "pending",
+        )
+        .values(status="revoked", responded_at=datetime.now(UTC))
+    )
 
 
 async def list_invitations(

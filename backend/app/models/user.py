@@ -34,6 +34,20 @@ class User(Base):
     verification_attempts: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
+    session_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    password_change_hash: Mapped[str | None] = mapped_column(String(255))
+    password_code_hash: Mapped[str | None] = mapped_column(String(64))
+    password_code_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    password_code_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    password_code_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
 
     memberships: Mapped[list["Membership"]] = relationship(
         back_populates="user",

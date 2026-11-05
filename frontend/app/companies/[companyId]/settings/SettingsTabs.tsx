@@ -1,7 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
+import Input from '@/components/ui/Input'
+import Select from '@/components/ui/Select'
+import Button from '@/components/ui/Button'
+import Spinner from '@/components/ui/Spinner'
+import { useToast } from '@/components/ui/ToastProvider'
 import type { Company, Category, Membership, Invitation } from '@/lib/types'
 import {
   clientPost,
@@ -51,8 +56,13 @@ export default function SettingsTabs({
   invitations,
 }: SettingsTabsProps) {
   const router = useRouter()
+  const notify = useToast()
+  const [refreshing, startRefresh] = useTransition()
+  const refresh = () => startRefresh(() => router.refresh())
+  const [memberBusy, setMemberBusy] = useState<number | null>(null)
+  const [memberError, setMemberError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<
-    'categories' | 'members' | 'company'
+    'categories' | 'members' | 'company' | 'invitations'
   >('categories')
 
   const isOwner = company.role === 'owner'
@@ -64,7 +74,6 @@ export default function SettingsTabs({
   const [editingCatId, setEditingCatId] = useState<number | null>(null)
   const [editingCatName, setEditingCatName] = useState('')
   const [catError, setCatError] = useState<string | null>(null)
-  const [catSuccess, setCatSuccess] = useState<string | null>(null)
   const [catLoading, setCatLoading] = useState(false)
 
   // Invite State
@@ -82,7 +91,6 @@ export default function SettingsTabs({
   const [compName, setCompName] = useState(company.name)
   const [compIndustry, setCompIndustry] = useState(company.industry_code || '')
   const [compError, setCompError] = useState<string | null>(null)
-  const [compSuccess, setCompSuccess] = useState<string | null>(null)
   const [compLoading, setCompLoading] = useState(false)
 
   // Handlers: Categories
@@ -92,15 +100,14 @@ export default function SettingsTabs({
 
     setCatLoading(true)
     setCatError(null)
-    setCatSuccess(null)
 
     try {
       await clientPost(`/api/companies/${company.id}/categories`, {
         name: newCatName.trim(),
       })
       setNewCatName('')
-      setCatSuccess('Категория успешно добавлена')
-      router.refresh()
+      notify('Категория добавлена')
+      refresh()
     } catch (err) {
       if (err instanceof ApiClientError) {
         if (err.status === 409) {
@@ -121,15 +128,14 @@ export default function SettingsTabs({
 
     setCatLoading(true)
     setCatError(null)
-    setCatSuccess(null)
 
     try {
       await clientPatch(`/api/companies/${company.id}/categories/${id}`, {
         name: editingCatName.trim(),
       })
       setEditingCatId(null)
-      setCatSuccess('Название категории обновлено')
-      router.refresh()
+      notify('Название категории обновлено')
+      refresh()
     } catch (err) {
       if (err instanceof ApiClientError) {
         setCatError(err.message || 'Ошибка обновления категории')
@@ -152,12 +158,11 @@ export default function SettingsTabs({
 
     setCatLoading(true)
     setCatError(null)
-    setCatSuccess(null)
 
     try {
       await clientDelete(`/api/companies/${company.id}/categories/${id}`)
-      setCatSuccess(`Категория «${name}» удалена`)
-      router.refresh()
+      notify(`Категория «${name}» удалена`)
+      refresh()
     } catch (err) {
       if (err instanceof ApiClientError) {
         if (err.status === 409) {
@@ -180,30 +185,40 @@ export default function SettingsTabs({
     userId: number,
     newRole: 'treasurer' | 'viewer',
   ) => {
+    setMemberBusy(userId)
+    setMemberError(null)
     try {
       await clientPatch(`/api/companies/${company.id}/members/${userId}`, {
         role: newRole,
       })
-      router.refresh()
+      notify('Роль участника изменена')
+      refresh()
     } catch (err) {
-      alert(
+      setMemberError(
         err instanceof ApiClientError ? err.message : 'Ошибка изменения роли',
       )
+    } finally {
+      setMemberBusy(null)
     }
   }
 
   const handleRemoveMember = async (userId: number, name?: string) => {
     if (!confirm(`Исключить участника ${name || userId} из компании?`)) return
 
+    setMemberBusy(userId)
+    setMemberError(null)
     try {
       await clientDelete(`/api/companies/${company.id}/members/${userId}`)
-      router.refresh()
+      notify('Участник исключён из компании')
+      refresh()
     } catch (err) {
-      alert(
+      setMemberError(
         err instanceof ApiClientError
           ? err.message
           : 'Ошибка исключения участника',
       )
+    } finally {
+      setMemberBusy(null)
     }
   }
 
@@ -225,7 +240,8 @@ export default function SettingsTabs({
       )
 
       setInviteEmail('')
-      router.refresh()
+      notify('Приглашение создано')
+      refresh()
 
       setGeneratedInviteUrl(
         res.invite_url
@@ -252,7 +268,8 @@ export default function SettingsTabs({
     setGeneratedInviteUrl(null)
     try {
       await clientDelete(`/api/companies/${company.id}/invitations/${inviteId}`)
-      router.refresh()
+      notify('Приглашение отозвано')
+      refresh()
     } catch (err) {
       setInviteError(
         err instanceof ApiClientError
@@ -279,12 +296,13 @@ export default function SettingsTabs({
         `/api/companies/${company.id}/invitations/${inviteId}/renew`,
         {},
       )
+      notify('Новая ссылка создана. Прежняя отозвана.')
       setGeneratedInviteUrl(
         res.invite_url
           ? new URL(res.invite_url, window.location.origin).href
           : null,
       )
-      router.refresh()
+      refresh()
     } catch (err) {
       setInviteError(
         err instanceof ApiClientError
@@ -303,15 +321,14 @@ export default function SettingsTabs({
 
     setCompLoading(true)
     setCompError(null)
-    setCompSuccess(null)
 
     try {
       await clientPatch(`/api/companies/${company.id}`, {
         name: compName.trim(),
         industry_code: compIndustry.trim() || null,
       })
-      setCompSuccess('Параметры компании обновлены')
-      router.refresh()
+      notify('Параметры компании сохранены')
+      refresh()
     } catch (err) {
       if (err instanceof ApiClientError) {
         setCompError(err.message || 'Ошибка обновления компании')
@@ -336,10 +353,16 @@ export default function SettingsTabs({
       </div>
 
       {/* Tabs Header */}
+      {refreshing && (
+        <p className='loading-status' role='status'>
+          <Spinner /> Обновляем данные компании…
+        </p>
+      )}
       <div
         style={{
           display: 'flex',
           gap: 'var(--space-2)',
+          flexWrap: 'wrap',
           borderBottom: '1px solid var(--color-rule)',
           marginBottom: 'var(--space-5)',
         }}
@@ -380,8 +403,17 @@ export default function SettingsTabs({
           }}
           onClick={() => setActiveTab('company')}
         >
-          Организация
+          Компания
         </button>
+        {isOwner && (
+          <button
+            type='button'
+            className={`btn ${activeTab === 'invitations' ? 'btn-primary' : 'btn-secondary'}`}
+            onClick={() => setActiveTab('invitations')}
+          >
+            Приглашения ({invitations.length})
+          </button>
+        )}
       </div>
 
       {/* TAB 1: CATEGORIES */}
@@ -407,8 +439,10 @@ export default function SettingsTabs({
           </div>
 
           {catError && <div className='notice notice-error'>{catError}</div>}
-          {catSuccess && (
-            <div className='notice notice-success'>{catSuccess}</div>
+          {catLoading && (
+            <p role='status' className='loading-status'>
+              <Spinner /> Обновляем категории…
+            </p>
           )}
 
           {/* Add Category Form (owner/treasurer) */}
@@ -422,7 +456,7 @@ export default function SettingsTabs({
                 maxWidth: '520px',
               }}
             >
-              <input
+              <Input
                 type='text'
                 required
                 maxLength={100}
@@ -430,16 +464,17 @@ export default function SettingsTabs({
                 className='form-input'
                 value={newCatName}
                 onChange={e => setNewCatName(e.target.value)}
-                disabled={catLoading}
+                disabled={catLoading || refreshing}
                 style={{ flex: 1 }}
               />
-              <button
+              <Button
                 type='submit'
                 className='btn btn-primary'
-                disabled={catLoading}
+                pending={catLoading}
+                pendingLabel='Добавление…'
               >
-                {catLoading ? '...' : '+ Добавить'}
-              </button>
+                + Добавить
+              </Button>
             </form>
           )}
 
@@ -475,7 +510,7 @@ export default function SettingsTabs({
                           <div
                             style={{ display: 'flex', gap: 'var(--space-2)' }}
                           >
-                            <input
+                            <Input
                               type='text'
                               required
                               className='form-input'
@@ -564,7 +599,7 @@ export default function SettingsTabs({
       )}
 
       {/* TAB 2: MEMBERS & INVITATIONS */}
-      {activeTab === 'members' && (
+      {(activeTab === 'members' || activeTab === 'invitations') && (
         <div
           style={{
             display: 'flex',
@@ -573,131 +608,149 @@ export default function SettingsTabs({
           }}
         >
           {/* Members List */}
-          <div
-            style={{
-              backgroundColor: 'var(--color-paper-2)',
-              padding: 'var(--space-5)',
-              borderRadius: 'var(--radius-surface)',
-              border: '1px solid var(--color-rule)',
-            }}
-          >
-            <h2
-              style={{
-                fontSize: '1.125rem',
-                marginTop: 0,
-                marginBottom: 'var(--space-3)',
-              }}
-            >
-              Текущие участники ({members.length})
-            </h2>
-
+          {activeTab === 'members' && (
             <div
-              className='ledger-wrapper'
               style={{
-                borderRadius: 'var(--radius-field)',
+                backgroundColor: 'var(--color-paper-2)',
+                padding: 'var(--space-5)',
+                borderRadius: 'var(--radius-surface)',
                 border: '1px solid var(--color-rule)',
               }}
             >
-              <table className='ledger-table'>
-                <thead>
-                  <tr>
-                    <th>Имя</th>
-                    <th>Email</th>
-                    <th>Роль</th>
-                    {isOwner && (
-                      <th style={{ textAlign: 'right' }}>Действия</th>
-                    )}
-                  </tr>
-                </thead>
-                <tbody>
-                  {members.map(m => {
-                    const isMemberOwner = m.role === 'owner'
-                    return (
-                      <tr key={m.user_id}>
-                        <td style={{ fontWeight: 600 }}>
-                          {m.full_name || '\u2014'}
-                        </td>
-                        <td>{m.email || '\u2014'}</td>
-                        <td>
-                          <span className='badge badge-role'>
-                            {roleToRussian(m.role)}
-                          </span>
-                        </td>
-                        {isOwner && (
-                          <td style={{ textAlign: 'right' }}>
-                            {!isMemberOwner ? (
-                              <div
-                                style={{
-                                  display: 'inline-flex',
-                                  gap: 'var(--space-2)',
-                                }}
-                              >
-                                <select
-                                  value={m.role}
-                                  onChange={e =>
-                                    handleUpdateMemberRole(
-                                      m.user_id,
-                                      e.target.value as 'treasurer' | 'viewer',
-                                    )
-                                  }
-                                  className='form-select'
-                                  style={{
-                                    minHeight: '28px',
-                                    padding: '2px 6px',
-                                    fontSize: '0.75rem',
-                                  }}
-                                >
-                                  <option value='treasurer'>Казначей</option>
-                                  <option value='viewer'>Наблюдатель</option>
-                                </select>
-                                <button
-                                  type='button'
-                                  className='btn btn-danger'
-                                  style={{
-                                    padding: '2px 8px',
-                                    minHeight: '28px',
-                                    fontSize: '0.75rem',
-                                  }}
-                                  onClick={() =>
-                                    handleRemoveMember(m.user_id, m.full_name)
-                                  }
-                                >
-                                  Исключить
-                                </button>
-                              </div>
-                            ) : (
-                              <span
-                                style={{
-                                  fontSize: '0.75rem',
-                                  color: 'var(--color-muted)',
-                                }}
-                              >
-                                Владелец
-                              </span>
-                            )}
-                          </td>
-                        )}
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            {!isOwner && (
-              <p
+              <h2
                 style={{
-                  fontSize: '0.8125rem',
-                  color: 'var(--color-muted)',
-                  marginTop: 'var(--space-3)',
-                  marginBottom: 0,
+                  fontSize: '1.125rem',
+                  marginTop: 0,
+                  marginBottom: 'var(--space-3)',
                 }}
               >
-                Управление составом участников и отправка приглашений доступны
-                только владельцу организации.
-              </p>
-            )}
-          </div>
+                Текущие участники ({members.length})
+              </h2>
+
+              {memberError && (
+                <div className='notice notice-error' role='alert'>
+                  {memberError}
+                </div>
+              )}
+              {memberBusy !== null && (
+                <p className='loading-status' role='status'>
+                  <Spinner /> Обновляем участника…
+                </p>
+              )}
+              <div
+                className='ledger-wrapper'
+                aria-busy={memberBusy !== null || refreshing}
+                style={{
+                  borderRadius: 'var(--radius-field)',
+                  border: '1px solid var(--color-rule)',
+                }}
+              >
+                <table className='ledger-table'>
+                  <thead>
+                    <tr>
+                      <th>Имя</th>
+                      <th>Email</th>
+                      <th>Роль</th>
+                      {isOwner && (
+                        <th style={{ textAlign: 'right' }}>Действия</th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {members.map(m => {
+                      const isMemberOwner = m.role === 'owner'
+                      return (
+                        <tr key={m.user_id}>
+                          <td style={{ fontWeight: 600 }}>
+                            {m.full_name || '\u2014'}
+                          </td>
+                          <td>{m.email || '\u2014'}</td>
+                          <td>
+                            <span className='badge badge-role'>
+                              {roleToRussian(m.role)}
+                            </span>
+                          </td>
+                          {isOwner && (
+                            <td style={{ textAlign: 'right' }}>
+                              {!isMemberOwner ? (
+                                <div
+                                  style={{
+                                    display: 'inline-flex',
+                                    gap: 'var(--space-2)',
+                                  }}
+                                >
+                                  <Select
+                                    aria-label={`Роль участника ${m.full_name || m.email || m.user_id}`}
+                                    disabled={memberBusy !== null || refreshing}
+                                    value={m.role}
+                                    onChange={e =>
+                                      handleUpdateMemberRole(
+                                        m.user_id,
+                                        e.target.value as
+                                          | 'treasurer'
+                                          | 'viewer',
+                                      )
+                                    }
+                                    className='form-select'
+                                    style={{
+                                      minHeight: '40px',
+                                      paddingLeft: '8px',
+                                      fontSize: '0.75rem',
+                                    }}
+                                  >
+                                    <option value='treasurer'>Казначей</option>
+                                    <option value='viewer'>Наблюдатель</option>
+                                  </Select>
+                                  <Button
+                                    type='button'
+                                    variant='danger'
+                                    disabled={memberBusy !== null || refreshing}
+                                    style={{
+                                      padding: '2px 8px',
+                                      minHeight: '40px',
+                                      fontSize: '0.75rem',
+                                    }}
+                                    onClick={() =>
+                                      handleRemoveMember(m.user_id, m.full_name)
+                                    }
+                                  >
+                                    Исключить
+                                  </Button>
+                                </div>
+                              ) : (
+                                <span
+                                  style={{
+                                    fontSize: '0.75rem',
+                                    color: 'var(--color-muted)',
+                                  }}
+                                >
+                                  Владелец
+                                </span>
+                              )}
+                            </td>
+                          )}
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {!isOwner && (
+                <p
+                  style={{
+                    fontSize: '0.8125rem',
+                    color: 'var(--color-muted)',
+                    marginTop: 'var(--space-3)',
+                    marginBottom: 0,
+                  }}
+                >
+                  Управление составом участников и отправка приглашений доступны
+                  только владельцу организации.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Create Invitation (Owner Only) */}
           {isOwner && (
@@ -742,7 +795,7 @@ export default function SettingsTabs({
                   <p style={{ margin: '0 0 var(--space-1)', fontWeight: 600 }}>
                     Ссылка-приглашение создана:
                   </p>
-                  <input
+                  <Input
                     type='text'
                     readOnly
                     value={generatedInviteUrl}
@@ -779,7 +832,7 @@ export default function SettingsTabs({
                   <label className='form-label' htmlFor='invEmail'>
                     Email сотрудника
                   </label>
-                  <input
+                  <Input
                     id='invEmail'
                     type='email'
                     required
@@ -798,7 +851,7 @@ export default function SettingsTabs({
                   <label className='form-label' htmlFor='invRole'>
                     Назначаемая роль
                   </label>
-                  <select
+                  <Select
                     id='invRole'
                     className='form-select'
                     value={inviteRole}
@@ -809,17 +862,18 @@ export default function SettingsTabs({
                   >
                     <option value='treasurer'>Казначей</option>
                     <option value='viewer'>Наблюдатель</option>
-                  </select>
+                  </Select>
                 </div>
 
-                <button
+                <Button
                   type='submit'
                   className='btn btn-primary'
-                  disabled={inviteLoading}
+                  pending={inviteLoading}
+                  pendingLabel='Создание…'
                   style={{ minHeight: '40px' }}
                 >
-                  {inviteLoading ? 'Создание...' : 'Создать ссылку'}
-                </button>
+                  Создать ссылку
+                </Button>
               </form>
 
               {/* Invitation History */}
@@ -933,16 +987,13 @@ export default function SettingsTabs({
           </h2>
 
           {compError && <div className='notice notice-error'>{compError}</div>}
-          {compSuccess && (
-            <div className='notice notice-success'>{compSuccess}</div>
-          )}
 
-          <form onSubmit={handleUpdateCompany}>
+          <form onSubmit={handleUpdateCompany} aria-busy={compLoading}>
             <div className='form-group'>
               <label className='form-label' htmlFor='companyNameField'>
                 Название компании *
               </label>
-              <input
+              <Input
                 id='companyNameField'
                 type='text'
                 required
@@ -958,7 +1009,7 @@ export default function SettingsTabs({
               <label className='form-label' htmlFor='companyIndustryField'>
                 Код или наименование отрасли
               </label>
-              <input
+              <Input
                 id='companyIndustryField'
                 type='text'
                 maxLength={50}
@@ -974,7 +1025,7 @@ export default function SettingsTabs({
               <label className='form-label' htmlFor='companyCurrencyField'>
                 Валюта расчетов
               </label>
-              <input
+              <Input
                 id='companyCurrencyField'
                 type='text'
                 readOnly
@@ -992,14 +1043,15 @@ export default function SettingsTabs({
             </div>
 
             {isOwner ? (
-              <button
+              <Button
                 type='submit'
                 className='btn btn-primary'
-                disabled={compLoading}
+                pending={compLoading}
+                pendingLabel='Сохранение…'
                 style={{ marginTop: 'var(--space-3)' }}
               >
-                {compLoading ? 'Сохранение...' : 'Сохранить изменения'}
-              </button>
+                Сохранить изменения
+              </Button>
             ) : (
               <p
                 style={{

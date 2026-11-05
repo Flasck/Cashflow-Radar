@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { clientPost } from '@/lib/api-client'
+import Button from './ui/Button'
 
 export default function LogoutButton() {
   const router = useRouter()
@@ -21,14 +22,15 @@ export default function LogoutButton() {
   }
 
   return (
-    <button
+    <Button
       type='button'
       onClick={handleLogout}
-      className='btn btn-secondary'
+      variant='secondary'
       style={{ padding: '6px 12px', minHeight: '32px', fontSize: '0.8125rem' }}
-      disabled={loading}
+      pending={loading}
+      pendingLabel='Выход…'
     >
-      {loading ? 'Выход...' : 'Выйти'}
-    </button>
+      Выйти
+    </Button>
   )
 }

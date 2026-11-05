@@ -4,9 +4,16 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { clientPost, ApiClientError } from '@/lib/api-client'
+import Input from '@/components/ui/Input'
+import PasswordInput from '@/components/ui/PasswordInput'
+import Button from '@/components/ui/Button'
+import { useToast } from '@/components/ui/ToastProvider'
+
+type RegistrationResponse = { email: string; retry_after: number }
 
 export default function RegisterPage() {
   const router = useRouter()
+  const notify = useToast()
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -17,15 +24,24 @@ export default function RegisterPage() {
   )
   const [code, setCode] = useState('')
   const [retryAfter, setRetryAfter] = useState(0)
+  const [resendAt, setResendAt] = useState(0)
 
   useEffect(() => {
-    if (retryAfter <= 0) return
-    const timer = window.setTimeout(
-      () => setRetryAfter(value => value - 1),
-      1000,
-    )
-    return () => window.clearTimeout(timer)
-  }, [retryAfter])
+    if (!resendAt) return
+    const update = () =>
+      setRetryAfter(Math.max(0, Math.ceil((resendAt - Date.now()) / 1000)))
+    const timer = window.setInterval(update, 1000)
+    window.addEventListener('focus', update)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', update)
+    }
+  }, [resendAt])
+
+  const updateCooldown = (seconds: number) => {
+    setRetryAfter(seconds)
+    setResendAt(seconds > 0 ? Date.now() + seconds * 1000 : 0)
+  }
 
   const finishRegistration = () => {
     const pendingInvite = sessionStorage.getItem('radar_invite_token')
@@ -45,15 +61,18 @@ export default function RegisterPage() {
     setLoading(true)
 
     try {
-      const result = await clientPost<{ email: string }>('/api/auth/register', {
-        full_name: fullName.trim(),
-        email: email.trim(),
-        password,
-      })
+      const result = await clientPost<RegistrationResponse>(
+        '/api/auth/register',
+        {
+          full_name: fullName.trim(),
+          email: email.trim(),
+          password,
+        },
+      )
 
       setVerificationEmail(result.email)
       setCode('')
-      setRetryAfter(60)
+      updateCooldown(result.retry_after)
     } catch (err) {
       if (err instanceof ApiClientError) {
         setError(err.message || 'Ошибка при регистрации')
@@ -90,14 +109,20 @@ export default function RegisterPage() {
     setLoading(true)
     setError(null)
     try {
-      await clientPost('/api/auth/resend-code', {
-        email: verificationEmail,
-        password,
-      })
+      const result = await clientPost<RegistrationResponse>(
+        '/api/auth/resend-code',
+        {
+          email: verificationEmail,
+          password,
+        },
+      )
       setCode('')
-      setRetryAfter(60)
+      updateCooldown(result.retry_after)
+      notify('Новый код отправлен на почту')
     } catch (err) {
-      if (err instanceof ApiClientError && err.status === 429) setRetryAfter(60)
+      if (err instanceof ApiClientError && err.code === 'EMAIL_RATE_LIMIT') {
+        updateCooldown(Number(err.fields?.retry_after ?? 0))
+      }
       setError(
         err instanceof ApiClientError
           ? err.message
@@ -138,7 +163,7 @@ export default function RegisterPage() {
           </h1>
           <p className='page-subtitle'>
             {verificationEmail
-              ? `Код отправлен на ${verificationEmail}. Он действует 10 минут. Проверьте также папку «Спам».`
+              ? `Введите код из последнего письма на ${verificationEmail}. Он действует 10 минут с момента отправки. Проверьте также папку «Спам».`
               : 'Создание аккаунта в CashFlow Radar'}
           </p>
         </div>
@@ -154,12 +179,12 @@ export default function RegisterPage() {
         )}
 
         {verificationEmail ? (
-          <form onSubmit={verifyCode}>
+          <form key='verification' onSubmit={verifyCode}>
             <div className='form-group'>
               <label className='form-label' htmlFor='verificationCode'>
                 Код из письма
               </label>
-              <input
+              <Input
                 id='verificationCode'
                 type='text'
                 inputMode='numeric'
@@ -175,14 +200,15 @@ export default function RegisterPage() {
                 disabled={loading}
               />
             </div>
-            <button
+            <Button
               type='submit'
               className='btn btn-primary'
               style={{ width: '100%' }}
-              disabled={loading}
+              pending={loading}
+              pendingLabel='Проверка…'
             >
-              {loading ? 'Подождите...' : 'Подтвердить почту'}
-            </button>
+              Подтвердить почту
+            </Button>
             <button
               type='button'
               className='btn btn-secondary'
@@ -209,12 +235,12 @@ export default function RegisterPage() {
             </button>
           </form>
         ) : (
-          <form onSubmit={handleSubmit}>
+          <form key='registration' onSubmit={handleSubmit}>
             <div className='form-group'>
               <label className='form-label' htmlFor='fullName'>
                 Имя и фамилия
               </label>
-              <input
+              <Input
                 id='fullName'
                 type='text'
                 required
@@ -231,7 +257,7 @@ export default function RegisterPage() {
               <label className='form-label' htmlFor='email'>
                 Email
               </label>
-              <input
+              <Input
                 id='email'
                 type='email'
                 required
@@ -248,9 +274,8 @@ export default function RegisterPage() {
               <label className='form-label' htmlFor='password'>
                 Пароль
               </label>
-              <input
+              <PasswordInput
                 id='password'
-                type='password'
                 required
                 minLength={8}
                 autoComplete='new-password'
@@ -262,14 +287,15 @@ export default function RegisterPage() {
               />
             </div>
 
-            <button
+            <Button
               type='submit'
               className='btn btn-primary'
               style={{ width: '100%', marginTop: 'var(--space-3)' }}
-              disabled={loading}
+              pending={loading}
+              pendingLabel='Отправка кода…'
             >
-              {loading ? 'Отправка кода...' : 'Зарегистрироваться'}
-            </button>
+              Зарегистрироваться
+            </Button>
           </form>
         )}
 

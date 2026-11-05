@@ -9,6 +9,8 @@ import type {
 } from '@/lib/types'
 import { clientPost, clientFetch, ApiClientError } from '@/lib/api-client'
 import ForecastChart from '@/components/ForecastChart'
+import Input from '@/components/ui/Input'
+import Button from '@/components/ui/Button'
 
 interface ForecastViewProps {
   company: Company
@@ -115,6 +117,7 @@ export default function ForecastView({
       {/* Configuration Form */}
       <form
         onSubmit={handleBuildForecast}
+        aria-busy={loading}
         style={{
           backgroundColor: 'var(--color-paper-2)',
           padding: 'var(--space-4)',
@@ -135,7 +138,7 @@ export default function ForecastView({
             <label className='form-label' htmlFor='cutoffDate'>
               История учтена по (отсечка, МСК)
             </label>
-            <input
+            <Input
               id='cutoffDate'
               type='date'
               required
@@ -210,14 +213,15 @@ export default function ForecastView({
             </div>
           </div>
 
-          <button
+          <Button
             type='submit'
-            className='btn btn-accent'
+            variant='accent'
             style={{ minHeight: '38px', padding: '8px 20px', fontWeight: 600 }}
-            disabled={loading}
+            pending={loading}
+            pendingLabel='Рассчитываем…'
           >
-            {loading ? 'Рассчитываем...' : 'Построить прогноз'}
-          </button>
+            Построить прогноз
+          </Button>
         </div>
 
         <div

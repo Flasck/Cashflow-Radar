@@ -17,7 +17,7 @@ from app.errors import (
 )
 from app.forecasting import close_forecast_channel
 
-MAX_BODY_BYTES = 5 * 1024 * 1024  # 5 MiB
+MAX_BODY_BYTES = 5 * 1024 * 1024
 
 
 class RequestSizeLimitMiddleware:
@@ -30,27 +30,21 @@ class RequestSizeLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        headers = dict(scope.get("headers", []))
-        content_length = headers.get(b"content-length")
-        if content_length:
-            try:
-                if int(content_length) > self.max_bytes:
-                    response = JSONResponse(
-                        status_code=413,
-                        content={
-                            "error": {
-                                "code": "PAYLOAD_TOO_LARGE",
-                                "message": "Размер запроса превышает допустимый лимит (5 МБ)",
-                                "fields": {},
-                            }
-                        },
-                    )
-                    await response(scope, receive, send)
-                    return
-            except ValueError:
-                pass
+        too_large = JSONResponse(
+            status_code=413,
+            content={
+                "error": {
+                    "code": "PAYLOAD_TOO_LARGE",
+                    "message": "Размер запроса превышает допустимый лимит (5 МБ)",
+                    "fields": {},
+                }
+            },
+        )
+        content_length = dict(scope.get("headers", [])).get(b"content-length", b"")
+        if content_length.isdigit() and int(content_length) > self.max_bytes:
+            await too_large(scope, receive, send)
+            return
 
-        # Buffer incoming stream up to max_bytes to guarantee 413 before downstream sees partial body
         body_chunks: list[bytes] = []
         total_received = 0
 
@@ -60,17 +54,7 @@ class RequestSizeLimitMiddleware:
                 chunk = message.get("body", b"")
                 total_received += len(chunk)
                 if total_received > self.max_bytes:
-                    response = JSONResponse(
-                        status_code=413,
-                        content={
-                            "error": {
-                                "code": "PAYLOAD_TOO_LARGE",
-                                "message": "Размер запроса превышает допустимый лимит (5 МБ)",
-                                "fields": {},
-                            }
-                        },
-                    )
-                    await response(scope, receive, send)
+                    await too_large(scope, receive, send)
                     return
 
                 body_chunks.append(chunk)
@@ -95,7 +79,6 @@ class RequestSizeLimitMiddleware:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
-    # Shutdown cleanly
     await close_forecast_channel()
     engine = get_engine()
     await engine.dispose()
@@ -120,8 +103,8 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    app.add_exception_handler(AppError, app_error_handler)  # type: ignore
-    app.add_exception_handler(RequestValidationError, validation_error_handler)  # type: ignore
+    app.add_exception_handler(AppError, app_error_handler)
+    app.add_exception_handler(RequestValidationError, validation_error_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
 
     app.include_router(api_router)

@@ -2,9 +2,8 @@ import asyncio
 import os
 from logging.config import fileConfig
 
-import app.models  # noqa: F401
 from alembic import context
-from app.db.connection import Base
+from app import models
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -16,7 +15,7 @@ if not database_url:
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
-target_metadata = Base.metadata
+target_metadata = models.User.metadata
 
 
 def run_migrations_offline() -> None:

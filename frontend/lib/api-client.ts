@@ -19,9 +19,6 @@ export class ApiClientError extends Error {
   }
 }
 
-/**
- * Extracts a cookie value by name from document.cookie in the browser.
- */
 function getCookie(name: string): string | null {
   if (typeof document === 'undefined') return null
   const match = document.cookie.match(
@@ -30,23 +27,30 @@ function getCookie(name: string): string | null {
   return match ? decodeURIComponent(match[3]) : null
 }
 
-/**
- * Client-side fetch helper for browser calls to /api/...
- * Automatically attaches X-CSRF-Token from csrf_token cookie and credentials: 'same-origin'.
- */
+let refreshRequest: Promise<boolean> | null = null
+
+export function refreshSession(): Promise<boolean> {
+  if (!refreshRequest) {
+    refreshRequest = fetch('/api/auth/refresh', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'X-CSRF-Token': getCookie('csrf_token') || '' },
+    }).then(res => res.ok).finally(() => { refreshRequest = null })
+  }
+  return refreshRequest
+}
+
 export async function clientFetch<T>(
   endpoint: string,
   options: RequestInit = {},
 ): Promise<T> {
   const headers = new Headers(options.headers)
 
-  // Read csrf_token cookie and send X-CSRF-Token header if available
   const csrfToken = getCookie('csrf_token')
   if (csrfToken && !headers.has('X-CSRF-Token')) {
     headers.set('X-CSRF-Token', csrfToken)
   }
 
-  // Ensure JSON headers if not FormData
   if (!(options.body instanceof FormData)) {
     if (!headers.has('Content-Type') && options.body) {
       headers.set('Content-Type', 'application/json')
@@ -58,11 +62,20 @@ export async function clientFetch<T>(
 
   const url = endpoint.startsWith('/') ? endpoint : `/${endpoint}`
 
-  const res = await fetch(url, {
+  let res = await fetch(url, {
     ...options,
     headers,
     credentials: 'same-origin',
   })
+
+  if (
+    res.status === 401 &&
+    (!url.startsWith('/api/auth/') || url === '/api/auth/me' || url === '/api/auth/logout') &&
+    await refreshSession()
+  ) {
+    headers.set('X-CSRF-Token', getCookie('csrf_token') || '')
+    res = await fetch(url, { ...options, headers, credentials: 'same-origin' })
+  }
 
   if (res.status === 401) {
     if (
@@ -88,13 +101,11 @@ export async function clientFetch<T>(
         fields = errJson.error.fields
       }
     } catch {
-      // Non-JSON response
     }
 
     throw new ApiClientError(res.status, errorCode, errorMessage, fields)
   }
 
-  // 204 No Content
   if (res.status === 204) {
     return {} as T
   }

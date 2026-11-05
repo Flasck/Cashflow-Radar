@@ -37,19 +37,11 @@ class PreviewSummary(StrictModel):
     total_net: str = "0.00"
 
 
-class PreviewResponse(StrictModel):
-    rows: list[PreviewRow]
-    errors: list[ImportPreviewError]
-    new_categories: list[str]
-    summary: PreviewSummary
-    can_commit: bool
-
-
 class CommitRow(StrictModel):
     operation_date: date
     amount: Decimal
     direction: Literal["inflow", "outflow"]
-    category: str | None = None
+    category: str | None = Field(default=None, max_length=100)
     purpose: str | None = Field(default=None, max_length=500)
 
     @field_validator("operation_date")
@@ -72,6 +64,15 @@ class CommitRow(StrictModel):
 
 class CommitRequest(StrictModel):
     rows: list[CommitRow]
+
+
+class PreviewResponse(StrictModel):
+    rows: list[PreviewRow]
+    errors: list[ImportPreviewError]
+    new_categories: list[str]
+    summary: PreviewSummary
+    can_commit: bool
+    commit_payload: CommitRequest | None = None
 
 
 class CommitResponse(StrictModel):

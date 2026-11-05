@@ -9,3 +9,4 @@
 **/.env.*
 **/*.log
 artifacts
+.local-checks

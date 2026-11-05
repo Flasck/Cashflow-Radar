@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import require_csrf, require_role
@@ -9,12 +9,14 @@ from app.forecasting import run_forecast
 from app.models.membership import Membership
 from app.schemas.forecast import ForecastRequest, ForecastResponse
 
-router = APIRouter(prefix="/companies/{company_id}/forecast", tags=["forecast"])
+router = APIRouter(tags=["forecast"])
 
 
-@router.post("", response_model=ForecastResponse)
+@router.post("/companies/{company_id}/forecast", response_model=ForecastResponse)
 async def generate_company_forecast(
-    company_id: int,
+    company_id: Annotated[
+        int, Path(openapi_examples={"existing_company": {"value": 69}})
+    ],
     payload: ForecastRequest,
     _membership: Annotated[
         Membership, Depends(require_role("owner", "treasurer", "viewer"))

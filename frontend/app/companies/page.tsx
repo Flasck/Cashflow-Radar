@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { serverFetch } from '@/lib/api-server'
-import type { Company, User } from '@/lib/types'
-import LogoutButton from '@/components/LogoutButton'
+import type { Company } from '@/lib/types'
+import AppFrame from '@/components/AppFrame'
 import CreateCompanySection from './CreateCompanySection'
 
 export const dynamic = 'force-dynamic'
@@ -20,46 +20,20 @@ function roleToRussian(role: string): string {
 }
 
 export default async function CompaniesPage() {
-  const [user, companies] = await Promise.all([
-    serverFetch<User>('/api/auth/me'),
-    serverFetch<Company[]>('/api/companies'),
-  ])
+  const companies = await serverFetch<Company[]>('/api/companies')
 
   return (
-    <div
-      style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}
-    >
-      <header className='app-header'>
-        <div className='app-container app-header-inner'>
-          <div className='app-brand'>
-            <span>CashFlow Radar</span>
-          </div>
-
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 'var(--space-3)',
-            }}
-          >
-            <span style={{ fontSize: '0.875rem', color: 'var(--color-muted)' }}>
-              {user.full_name} ({user.email})
-            </span>
-            <LogoutButton />
-          </div>
-        </div>
-      </header>
-
+    <AppFrame>
       <main
         className='app-container'
         style={{ flex: 1, paddingBottom: 'var(--space-6)' }}
       >
         <div className='page-header'>
           <div>
-            <h1 className='page-title'>Организации</h1>
+            <h1 className='page-title'>Компании</h1>
             <p className='page-subtitle'>
-              Выберите компанию для перехода к журналу операций или
-              зарегистрируйте новую
+              Выберите компанию для перехода к журналу операций или создайте
+              новую. Доступ к каждой компании определяется вашей ролью.
             </p>
           </div>
           <div>
@@ -93,14 +67,16 @@ export default async function CompaniesPage() {
                 margin: '0 auto var(--space-4)',
               }}
             >
-              Создайте вашу первую организацию для ведения реестра операций и
-              прогнозирования NetCF, либо запросите ссылку-приглашение у
-              владельца.
+              Создайте компанию для учёта денежных потоков или примите
+              приглашение от владельца.
             </p>
+            <Link href='/invitations' className='btn btn-secondary'>
+              Посмотреть приглашения
+            </Link>
           </div>
         ) : (
           <div
-            className='ledger-wrapper'
+            className='ledger-wrapper companies-list'
             style={{
               borderRadius: 'var(--radius-surface)',
               border: '1px solid var(--color-rule)',
@@ -170,6 +146,6 @@ export default async function CompaniesPage() {
           </div>
         )}
       </main>
-    </div>
+    </AppFrame>
   )
 }

@@ -1,15 +1,14 @@
 from collections.abc import Sequence
 from datetime import date
-from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.errors import NotFoundError, UnauthorizedError
 from app.models.company import Company
 from app.models.membership import Membership
 from app.models.transaction import Transaction
-
-UNSET: Any = object()
+from app.models.user import User
 
 
 async def create_company_with_owner(
@@ -18,6 +17,11 @@ async def create_company_with_owner(
     industry_code: str | None,
     owner_user_id: int,
 ) -> tuple[Company, Membership]:
+    user = await session.scalar(
+        select(User).where(User.id == owner_user_id).with_for_update()
+    )
+    if user is None:
+        raise UnauthorizedError(code="USER_NOT_FOUND")
     company = Company(
         name=name.strip(),
         industry_code=industry_code.strip() if industry_code else None,
@@ -40,6 +44,15 @@ async def get_company(session: AsyncSession, company_id: int) -> Company | None:
     return await session.get(Company, company_id)
 
 
+async def lock_company(session: AsyncSession, company_id: int) -> Company:
+    company = await session.scalar(
+        select(Company).where(Company.id == company_id).with_for_update()
+    )
+    if company is None:
+        raise NotFoundError(message="Компания не найдена", code="COMPANY_NOT_FOUND")
+    return company
+
+
 async def list_user_companies(
     session: AsyncSession,
     user_id: int,
@@ -51,24 +64,7 @@ async def list_user_companies(
         .order_by(Company.id)
     )
     result = await session.execute(stmt)
-    return result.all()  # list of (Company, role)
-
-
-async def update_company(
-    session: AsyncSession,
-    company_id: int,
-    name: Any = UNSET,
-    industry_code: Any = UNSET,
-) -> Company | None:
-    company = await get_company(session, company_id)
-    if company is None:
-        return None
-    if name is not UNSET:
-        company.name = name.strip()
-    if industry_code is not UNSET:
-        company.industry_code = industry_code.strip() if industry_code else None
-    await session.flush()
-    return company
+    return result.all()
 
 
 async def get_company_last_operation_date(

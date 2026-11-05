@@ -1,11 +1,8 @@
-"""Create the current six-table application schema."""
-
 from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 
-# revision identifiers, used by Alembic.
 revision: str = "0001_initial_schema"
 down_revision: str | Sequence[str] | None = None
 branch_labels: str | Sequence[str] | None = None
@@ -13,7 +10,6 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # 1. users
     op.create_table(
         "users",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
@@ -36,10 +32,24 @@ def upgrade() -> None:
             server_default=sa.text("0"),
         ),
         sa.UniqueConstraint("email", name="uq_users_email"),
+        sa.Column(
+            "session_version", sa.Integer(), nullable=False, server_default=sa.text("0")
+        ),
+        sa.Column("password_change_hash", sa.String(255), nullable=True),
+        sa.Column("password_code_hash", sa.String(64), nullable=True),
+        sa.Column(
+            "password_code_expires_at", sa.DateTime(timezone=True), nullable=True
+        ),
+        sa.Column("password_code_sent_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "password_code_attempts",
+            sa.Integer(),
+            nullable=False,
+            server_default=sa.text("0"),
+        ),
     )
     op.create_index("ix_users_email", "users", ["email"])
 
-    # 2. companies
     op.create_table(
         "companies",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
@@ -47,7 +57,6 @@ def upgrade() -> None:
         sa.Column("industry_code", sa.String(length=50), nullable=True),
     )
 
-    # 3. memberships
     membership_role = sa.Enum("owner", "treasurer", "viewer", name="membership_role")
     op.create_table(
         "memberships",
@@ -74,7 +83,6 @@ def upgrade() -> None:
         postgresql_where=sa.text("role = 'owner'"),
     )
 
-    # 4. invitations
     invitation_role = sa.Enum("treasurer", "viewer", name="invitation_role")
     invitation_status = sa.Enum(
         "pending", "accepted", "declined", "revoked", name="invitation_status"
@@ -107,7 +115,6 @@ def upgrade() -> None:
         "ix_invitations_company_email", "invitations", ["company_id", "email"]
     )
 
-    # 5. categories
     op.create_table(
         "categories",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
@@ -128,7 +135,6 @@ def upgrade() -> None:
         unique=True,
     )
 
-    # 6. transactions
     direction_enum = sa.Enum("inflow", "outflow", name="transaction_direction")
     op.create_table(
         "transactions",

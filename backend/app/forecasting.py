@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -15,15 +16,11 @@ from app.errors import (
 from app.models.transaction import Transaction
 from app.schemas.common import format_decimal
 from app.schemas.forecast import ForecastPoint, ForecastResponse
-
-try:
-    from contracts.forecast.v1 import forecast_pb2, forecast_pb2_grpc
-except ImportError:
-    forecast_pb2 = None
-    forecast_pb2_grpc = None
+from contracts import forecast_pb2, forecast_pb2_grpc
 
 MAX_HISTORY_DAYS = 1825
 MIN_HISTORY_DAYS = 30
+logger = logging.getLogger("uvicorn.error")
 
 _channel: grpc.aio.Channel | None = None
 
@@ -48,25 +45,20 @@ async def get_dense_history_series(
     company_id: int,
     history_end: date,
 ) -> tuple[list[tuple[date, Decimal]], date | None, list[str]]:
-    earliest_stmt = select(func.min(Transaction.operation_date)).where(
+    bounds_stmt = select(
+        func.min(Transaction.operation_date), func.max(Transaction.operation_date)
+    ).where(
         Transaction.company_id == company_id,
         Transaction.operation_date <= history_end,
     )
-    res_earliest = await session.execute(earliest_stmt)
-    earliest_date = res_earliest.scalar()
+    bounds = await session.execute(bounds_stmt)
+    earliest_date, last_operation_date = bounds.one()
 
     if earliest_date is None:
         raise UnprocessableError(
             message="Нужно минимум 30 календарных дней истории",
             code="INSUFFICIENT_HISTORY",
         )
-
-    latest_stmt = select(func.max(Transaction.operation_date)).where(
-        Transaction.company_id == company_id,
-        Transaction.operation_date <= history_end,
-    )
-    res_latest = await session.execute(latest_stmt)
-    last_operation_date = res_latest.scalar()
 
     warnings: list[str] = []
     history_start = earliest_date
@@ -82,29 +74,17 @@ async def get_dense_history_series(
         history_start = history_end - timedelta(days=MAX_HISTORY_DAYS - 1)
         warnings.append("HISTORY_TRUNCATED")
 
-    inflow_sum = func.coalesce(
-        func.sum(
-            case(
-                (Transaction.direction == "inflow", Transaction.amount),
-                else_=Decimal("0.00"),
-            )
-        ),
-        Decimal("0.00"),
-    )
-    outflow_sum = func.coalesce(
-        func.sum(
-            case(
-                (Transaction.direction == "outflow", Transaction.amount),
-                else_=Decimal("0.00"),
-            )
-        ),
-        Decimal("0.00"),
+    net_sum = func.sum(
+        case(
+            (Transaction.direction == "inflow", Transaction.amount),
+            else_=-Transaction.amount,
+        )
     )
 
     stmt = (
         select(
             Transaction.operation_date,
-            (inflow_sum - outflow_sum).label("net_cf"),
+            net_sum.label("net_cf"),
         )
         .where(
             Transaction.company_id == company_id,
@@ -133,12 +113,21 @@ async def run_forecast(
     history_end: date,
     horizon_days: int,
 ) -> ForecastResponse:
-    if forecast_pb2 is None or forecast_pb2_grpc is None:
-        raise ServiceUnavailableError("Модуль контракта прогнозирования недоступен")
-
     dense_history, last_operation_date, api_warnings = await get_dense_history_series(
         session, company_id, history_end
     )
+    return await predict_history(
+        dense_history, horizon_days, last_operation_date, api_warnings
+    )
+
+
+async def predict_history(
+    dense_history: list[tuple[date, Decimal]],
+    horizon_days: int,
+    last_operation_date: date | None = None,
+    api_warnings: list[str] | None = None,
+) -> ForecastResponse:
+    history_end = dense_history[-1][0]
 
     history_points = []
     for dt, net_cf in dense_history:
@@ -161,11 +150,22 @@ async def run_forecast(
 
     channel = get_forecast_channel()
     stub = forecast_pb2_grpc.ForecastServiceStub(channel)
+    logger.info(
+        "gRPC stub created: ForecastServiceStub, target=%s",
+        get_settings().forecast_grpc_target,
+    )
 
     try:
+        logger.info(
+            "gRPC sending PredictRequest: history_days=%d, horizon_days=%d, protobuf_bytes=%d",
+            len(request.history),
+            horizon_days,
+            request.ByteSize(),
+        )
         response = await stub.Predict(request, timeout=30.0)
     except grpc.aio.AioRpcError as rpc_err:
         code = rpc_err.code()
+        logger.warning("gRPC Predict failed: status=%s", code.name)
         details = rpc_err.details() or "Ошибка сервиса прогнозирования"
         if code == grpc.StatusCode.INVALID_ARGUMENT:
             raise UnprocessableError(message=details, code="INVALID_ARGUMENT")
@@ -182,6 +182,13 @@ async def run_forecast(
                 message=f"Ошибка сервиса прогнозирования: {details}",
             )
 
+    logger.info(
+        "gRPC received PredictResponse: forecast_points=%d, model=%s, protobuf_bytes=%d",
+        len(response.forecast),
+        response.model_version,
+        response.ByteSize(),
+    )
+
     if len(response.forecast) != horizon_days:
         raise BadGatewayError(
             message=f"Некорректное число точек прогноза: ожидалось {horizon_days}, получено {len(response.forecast)}",
@@ -195,10 +202,7 @@ async def run_forecast(
             )
         expected_date += timedelta(days=1)
 
-    combined_warnings = list(api_warnings)
-    for w in response.warnings:
-        if w not in combined_warnings:
-            combined_warnings.append(w)
+    combined_warnings = list(dict.fromkeys([*(api_warnings or []), *response.warnings]))
 
     forecast_points = []
     for pt in response.forecast:
@@ -221,7 +225,7 @@ async def run_forecast(
         else None,
         history_days=len(dense_history),
         horizon_days=horizon_days,
-        model=response.model_version or "hist_gradient_boosting_v1",
+        model=response.model_version or "unknown",
         currency="RUB",
         generated_at=generated_at,
         warnings=combined_warnings,

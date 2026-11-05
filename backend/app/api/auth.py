@@ -7,53 +7,41 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import check_origin, get_current_user, require_csrf
-from app.crud.users import create_user, get_user_by_email
+from app.api.dependencies import (
+    check_origin,
+    get_current_user,
+    get_current_user_and_token,
+    require_csrf,
+)
+from app.auth_sessions import issue_tokens, token_hash
+from app.crud.users import create_user
 from app.db.connection import get_db
-from app.email_verification import MAX_ATTEMPTS, hash_code, issue_code
+from app.email_verification import MAX_ATTEMPTS, hash_code, issue_code, retry_after
 from app.errors import AppError, ConflictError, ForbiddenError, UnauthorizedError
+from app.models.auth_session import AuthSession
 from app.models.user import User
 from app.schemas.auth import (
     LoginRequest,
+    RefreshRequest,
     RegisterRequest,
     RegistrationResponse,
+    TokenResponse,
     UserResponse,
     VerificationRequest,
 )
 from app.security import (
-    create_access_token,
-    generate_csrf_token,
+    decode_token,
     hash_password,
+    verify_csrf,
     verify_password,
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-def _set_auth_cookies(response: Response, user_id: int) -> None:
-    csrf_token = generate_csrf_token()
-    token = create_access_token(user_id=user_id, csrf_token=csrf_token)
-
-    response.set_cookie(
-        key="access_token",
-        value=token,
-        httponly=True,
-        samesite="lax",
-        path="/",
-        secure=False,
-    )
-    response.set_cookie(
-        key="csrf_token",
-        value=csrf_token,
-        httponly=False,
-        samesite="lax",
-        path="/",
-        secure=False,
-    )
-
-
 def _clear_auth_cookies(response: Response) -> None:
     response.delete_cookie(key="access_token", path="/")
+    response.delete_cookie(key="refresh_token", path="/")
     response.delete_cookie(key="csrf_token", path="/")
 
 
@@ -67,18 +55,24 @@ async def register(
     payload: RegisterRequest,
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> RegistrationResponse:
-    check_origin(request)
+    check_origin(request, required=False)
     existing = await _locked_user(session, payload.email)
     if existing is not None:
         if existing.email_verified:
             raise ConflictError(
                 message="Пользователь с таким email уже существует", code="EMAIL_EXISTS"
             )
+        if verify_password(payload.password, existing.password_hash):
+            return RegistrationResponse(
+                email=existing.email, retry_after=retry_after(existing)
+            )
         await issue_code(existing)
         existing.full_name = payload.full_name.strip()
         existing.password_hash = hash_password(payload.password)
         await session.commit()
-        return RegistrationResponse(email=existing.email)
+        return RegistrationResponse(
+            email=existing.email, retry_after=retry_after(existing)
+        )
 
     try:
         user = await create_user(
@@ -95,7 +89,7 @@ async def register(
             message="Регистрация уже начата. Попробуйте войти или повторить отправку.",
             code="EMAIL_EXISTS",
         ) from None
-    return RegistrationResponse(email=user.email)
+    return RegistrationResponse(email=user.email, retry_after=retry_after(user))
 
 
 async def _locked_user(session: AsyncSession, email: str) -> User | None:
@@ -117,7 +111,7 @@ async def resend_code(
     payload: LoginRequest,
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> RegistrationResponse:
-    check_origin(request)
+    check_origin(request, required=False)
     user = await _locked_user(session, payload.email)
     _check_password(user, payload.password)
     assert user is not None
@@ -128,17 +122,34 @@ async def resend_code(
         )
     await issue_code(user)
     await session.commit()
-    return RegistrationResponse(email=user.email)
+    return RegistrationResponse(email=user.email, retry_after=retry_after(user))
 
 
-@router.post("/verify-email", response_model=UserResponse)
+@router.post("/verification/status", response_model=RegistrationResponse)
+async def verification_status(
+    request: Request,
+    payload: LoginRequest,
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> RegistrationResponse:
+    check_origin(request, required=False)
+    user = await _locked_user(session, payload.email)
+    _check_password(user, payload.password)
+    assert user is not None
+    return RegistrationResponse(
+        email=user.email,
+        status="verified" if user.email_verified else "verification_required",
+        retry_after=retry_after(user),
+    )
+
+
+@router.post("/verify-email", response_model=TokenResponse)
 async def verify_email(
     request: Request,
     payload: VerificationRequest,
     response: Response,
     session: Annotated[AsyncSession, Depends(get_db)],
-) -> UserResponse:
-    check_origin(request)
+) -> TokenResponse:
+    check_origin(request, required=False)
     user = await _locked_user(session, payload.email)
     if user is None or user.email_verified or not user.verification_code_hash:
         raise AppError(
@@ -166,36 +177,102 @@ async def verify_email(
     user.verification_expires_at = None
     user.verification_sent_at = None
     user.verification_attempts = 0
-    await session.commit()
-    _set_auth_cookies(response, user.id)
-    return UserResponse(id=user.id, full_name=user.full_name, email=user.email)
+    return await issue_tokens(session, response, user)
 
 
-@router.post("/login", response_model=UserResponse)
+@router.post("/login", response_model=TokenResponse)
 async def login(
     request: Request,
     payload: LoginRequest,
     response: Response,
     session: Annotated[AsyncSession, Depends(get_db)],
-) -> UserResponse:
-    check_origin(request)
-    user = await get_user_by_email(session, payload.email)
+) -> TokenResponse:
+    check_origin(request, required=False)
+    user = await _locked_user(session, payload.email)
     _check_password(user, payload.password)
     assert user is not None
     if not user.email_verified:
-        raise ForbiddenError(
-            message="Подтвердите почту кодом из письма", code="EMAIL_NOT_VERIFIED"
+        raise AppError(
+            403,
+            "EMAIL_NOT_VERIFIED",
+            "Подтвердите почту кодом из письма",
+            fields={"email": user.email, "retry_after": str(retry_after(user))},
         )
 
-    _set_auth_cookies(response, user.id)
-    return UserResponse(id=user.id, full_name=user.full_name, email=user.email)
+    return await issue_tokens(session, response, user)
+
+
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh(
+    request: Request,
+    response: Response,
+    session: Annotated[AsyncSession, Depends(get_db)],
+    payload: RefreshRequest | None = None,
+) -> TokenResponse:
+    token = payload.refresh_token if payload else request.cookies.get("refresh_token")
+    if not token:
+        raise UnauthorizedError(message="Требуется refresh-токен")
+    claims = decode_token(token, "refresh")
+    if payload is not None:
+        check_origin(request, required=False)
+    if payload is None:
+        check_origin(request)
+        if not verify_csrf(request.headers.get("X-CSRF-Token"), claims.get("csrf")):
+            raise ForbiddenError(message="Неверный CSRF-токен", code="INVALID_CSRF")
+    try:
+        user_id = int(claims["sub"])
+    except (ValueError, TypeError):
+        raise UnauthorizedError(code="INVALID_TOKEN") from None
+    user = await session.scalar(
+        select(User).where(User.id == user_id).with_for_update()
+    )
+    if (
+        user is None
+        or claims.get("version") != user.session_version
+        or not user.email_verified
+    ):
+        raise UnauthorizedError(code="SESSION_REVOKED")
+    auth_session = await session.scalar(
+        select(AuthSession).where(AuthSession.id == claims.get("sid")).with_for_update()
+    )
+    if (
+        auth_session is None
+        or auth_session.user_id != user.id
+        or auth_session.revoked_at is not None
+        or auth_session.expires_at <= datetime.now(UTC)
+    ):
+        raise UnauthorizedError(code="SESSION_REVOKED")
+    if not hmac.compare_digest(auth_session.refresh_hash, token_hash(token)):
+        auth_session.revoked_at = datetime.now(UTC)
+        await session.commit()
+        raise UnauthorizedError(
+            message="Refresh-токен уже использован. Войдите заново.",
+            code="REFRESH_REUSED",
+        )
+    return await issue_tokens(session, response, user, auth_session)
 
 
 @router.post("/logout")
 async def logout(
     response: Response,
+    auth: Annotated[tuple[User, dict], Depends(get_current_user_and_token)],
+    session: Annotated[AsyncSession, Depends(get_db)],
     _csrf: Annotated[None, Depends(require_csrf)],
 ) -> dict[str, str]:
+    current, claims = auth
+    user = await session.scalar(
+        select(User).where(User.id == current.id).with_for_update()
+    )
+    assert user is not None
+    if "sid" in claims:
+        auth_session = await session.get(
+            AuthSession, claims["sid"], with_for_update=True
+        )
+        if auth_session is not None:
+            auth_session.revoked_at = datetime.now(UTC)
+    else:
+        user.session_version += 1
+    await session.commit()
     _clear_auth_cookies(response)
     return {"status": "ok"}
 

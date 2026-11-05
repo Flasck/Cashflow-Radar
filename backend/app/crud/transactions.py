@@ -1,15 +1,12 @@
 from collections.abc import Sequence
 from datetime import date
 from decimal import Decimal
-from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.category import Category
 from app.models.transaction import Transaction
-
-UNSET: Any = object()
 
 
 async def create_transaction(
@@ -108,35 +105,6 @@ async def list_transactions(
     items = items_result.all()
 
     return items, total
-
-
-async def update_transaction(
-    session: AsyncSession,
-    company_id: int,
-    transaction_id: int,
-    operation_date: Any = UNSET,
-    amount: Any = UNSET,
-    direction: Any = UNSET,
-    category_id: Any = UNSET,
-    purpose: Any = UNSET,
-) -> Transaction | None:
-    tx = await get_transaction(session, company_id, transaction_id)
-    if tx is None:
-        return None
-
-    if operation_date is not UNSET:
-        tx.operation_date = operation_date
-    if amount is not UNSET:
-        tx.amount = amount
-    if direction is not UNSET:
-        tx.direction = direction
-    if category_id is not UNSET:
-        tx.category_id = category_id
-    if purpose is not UNSET:
-        tx.purpose = purpose
-
-    await session.flush()
-    return tx
 
 
 async def delete_transaction(

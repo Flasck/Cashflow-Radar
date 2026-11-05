@@ -5,6 +5,7 @@
   --color-paper: oklch(97% 0.006 55);
   --color-paper-2: oklch(94.5% 0.007 55);
   --color-ink: oklch(21% 0.012 38);
+  --color-overlay: oklch(21% 0.012 38 / 0.42);
   --color-muted: oklch(47% 0.013 45);
   --color-rule: oklch(87% 0.009 55);
   --color-field-border: oklch(47% 0.013 45);
@@ -32,6 +33,14 @@
   --color-success-rule: oklch(80% 0.1 145);
   --color-success-surface: oklch(96% 0.03 145);
   --color-success-ink: oklch(25% 0.1 145);
+  --color-category-1: #b4442e;
+  --color-category-2: #26745b;
+  --color-category-3: #425f99;
+  --color-category-4: #956f27;
+  --color-category-5: #7c518a;
+  --color-category-6: #39808b;
+  --color-category-7: #9b5265;
+  --color-category-8: #657537;
 
   --font-body:
     system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
@@ -48,4 +57,9 @@
   --radius-field: 6px;
   --radius-surface: 8px;
   --max-width: 1440px;
+
+  --motion-fast: 120ms;
+  --motion-enter: 180ms;
+  --motion-reveal: 240ms;
+  --ease-soft: cubic-bezier(0.2, 0.7, 0.2, 1);
 }

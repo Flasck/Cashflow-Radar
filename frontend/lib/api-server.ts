@@ -23,11 +23,6 @@ export class ApiServerError extends Error {
   }
 }
 
-/**
- * Server-side internal API fetcher.
- * Forwards ONLY the `access_token` cookie, sets `cache: 'no-store'`,
- * redirects to /login on 401.
- */
 export async function serverFetch<T>(
   endpoint: string,
   options: RequestInit = {},
@@ -39,7 +34,6 @@ export async function serverFetch<T>(
   headers.set('Accept', 'application/json')
 
   if (accessToken) {
-    // Only forward the access_token cookie
     headers.set('Cookie', `access_token=${accessToken}`)
   }
 
@@ -52,6 +46,9 @@ export async function serverFetch<T>(
   })
 
   if (res.status === 401) {
+    if (cookieStore.get('refresh_token')) {
+      redirect('/session/refresh')
+    }
     redirect('/login')
   }
 
@@ -68,7 +65,6 @@ export async function serverFetch<T>(
         fields = errJson.error.fields
       }
     } catch {
-      // Body not JSON
     }
 
     throw new ApiServerError(res.status, errorCode, errorMessage, fields)

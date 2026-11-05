@@ -159,6 +159,12 @@ export interface Invitation {
   invite_url?: string | null
 }
 
+export interface PersonalInvitation extends Invitation {
+  company_name: string
+  owner_name: string
+  is_member: boolean
+}
+
 export interface ApiErrorDetail {
   code: string
   message: string

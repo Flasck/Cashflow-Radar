@@ -6,6 +6,10 @@ import Link from 'next/link'
 import type { Category, TransactionDirection, Transaction } from '@/lib/types'
 import { parseSignedMoney } from '@/lib/money'
 import { clientPost, ApiClientError } from '@/lib/api-client'
+import Input from '@/components/ui/Input'
+import Select from '@/components/ui/Select'
+import Button from '@/components/ui/Button'
+import { useToast } from '@/components/ui/ToastProvider'
 
 interface NewTransactionFormProps {
   companyId: number
@@ -19,6 +23,7 @@ export default function NewTransactionForm({
   todayMoscow,
 }: NewTransactionFormProps) {
   const router = useRouter()
+  const notify = useToast()
 
   const [operationDate, setOperationDate] = useState(todayMoscow)
   const [rawAmount, setRawAmount] = useState('')
@@ -78,6 +83,7 @@ export default function NewTransactionForm({
         },
       )
 
+      notify('Операция добавлена')
       router.push(`/companies/${companyId}/transactions`)
       router.refresh()
     } catch (err) {
@@ -122,13 +128,13 @@ export default function NewTransactionForm({
         </div>
       )}
 
-      <form onSubmit={handleSubmit}>
+      <form onSubmit={handleSubmit} aria-busy={loading}>
         {/* Date */}
         <div className='form-group'>
           <label className='form-label' htmlFor='txDate'>
             Дата операции *
           </label>
-          <input
+          <Input
             id='txDate'
             type='date'
             required
@@ -157,6 +163,7 @@ export default function NewTransactionForm({
               className={`btn ${direction === 'inflow' ? 'btn-primary' : 'btn-secondary'}`}
               style={{ flex: 1, minHeight: '36px', fontSize: '0.875rem' }}
               onClick={() => handleDirectionToggle('inflow')}
+              disabled={loading}
             >
               + Поступление
             </button>
@@ -165,12 +172,13 @@ export default function NewTransactionForm({
               className={`btn ${direction === 'outflow' ? 'btn-primary' : 'btn-secondary'}`}
               style={{ flex: 1, minHeight: '36px', fontSize: '0.875rem' }}
               onClick={() => handleDirectionToggle('outflow')}
+              disabled={loading}
             >
               − Выплата
             </button>
           </div>
 
-          <input
+          <Input
             id='txAmount'
             type='text'
             required
@@ -196,7 +204,7 @@ export default function NewTransactionForm({
           <label className='form-label' htmlFor='txCategory'>
             Категория (необязательно)
           </label>
-          <select
+          <Select
             id='txCategory'
             className='form-select'
             value={categoryId}
@@ -209,7 +217,7 @@ export default function NewTransactionForm({
                 {c.name}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
 
         {/* Purpose (Optional) */}
@@ -217,7 +225,7 @@ export default function NewTransactionForm({
           <label className='form-label' htmlFor='txPurpose'>
             Назначение платежа / контрагент (необязательно)
           </label>
-          <input
+          <Input
             id='txPurpose'
             type='text'
             maxLength={500}
@@ -237,14 +245,15 @@ export default function NewTransactionForm({
             marginTop: 'var(--space-5)',
           }}
         >
-          <button
+          <Button
             type='submit'
             className='btn btn-primary'
             style={{ minWidth: '140px' }}
-            disabled={loading}
+            pending={loading}
+            pendingLabel='Сохранение…'
           >
-            {loading ? 'Сохранение...' : 'Сохранить'}
-          </button>
+            Сохранить
+          </Button>
           <Link
             href={`/companies/${companyId}/transactions`}
             className='btn btn-secondary'

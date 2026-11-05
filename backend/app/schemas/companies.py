@@ -62,3 +62,9 @@ class InvitationResponse(StrictModel):
 
 class AcceptInvitationRequest(StrictModel):
     token: str = Field(min_length=1, max_length=256)
+
+
+class PersonalInvitationResponse(InvitationResponse):
+    company_name: str
+    owner_name: str
+    is_member: bool

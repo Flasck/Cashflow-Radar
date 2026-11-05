@@ -11,6 +11,9 @@ import type {
 } from '@/lib/types'
 import { clientUpload, clientPost, ApiClientError } from '@/lib/api-client'
 import { formatMoneyRub } from '@/lib/money'
+import Input from '@/components/ui/Input'
+import Button from '@/components/ui/Button'
+import { useToast } from '@/components/ui/ToastProvider'
 
 interface ImportFlowProps {
   companyId: number
@@ -18,6 +21,7 @@ interface ImportFlowProps {
 
 export default function ImportFlow({ companyId }: ImportFlowProps) {
   const router = useRouter()
+  const notify = useToast()
 
   const [step, setStep] = useState<'upload' | 'preview' | 'success'>('upload')
   const [file, setFile] = useState<File | null>(null)
@@ -106,6 +110,7 @@ export default function ImportFlow({ companyId }: ImportFlowProps) {
       )
       setCommitResult(res)
       setStep('success')
+      notify('Импорт завершён. Операции добавлены.')
     } catch (err) {
       if (err instanceof ApiClientError) {
         setError(err.message || 'Ошибка сохранения импортированных записей')
@@ -246,12 +251,12 @@ export default function ImportFlow({ companyId }: ImportFlowProps) {
             </ul>
           </div>
 
-          <form onSubmit={handleUploadPreview}>
+          <form onSubmit={handleUploadPreview} aria-busy={loading}>
             <div className='form-group'>
               <label className='form-label' htmlFor='importFile'>
                 Файл для загрузки (.csv или .xlsx)
               </label>
-              <input
+              <Input
                 id='importFile'
                 type='file'
                 accept='.csv, .xlsx, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, text/csv'
@@ -270,14 +275,16 @@ export default function ImportFlow({ companyId }: ImportFlowProps) {
               )}
             </div>
 
-            <button
+            <Button
               type='submit'
               className='btn btn-primary'
-              disabled={loading || !file}
+              pending={loading}
+              pendingLabel='Проверяем файл…'
+              disabled={!file}
               style={{ minWidth: '160px', marginTop: 'var(--space-2)' }}
             >
-              {loading ? 'Проверяем файл...' : 'Проверить файл'}
-            </button>
+              Проверить файл
+            </Button>
           </form>
         </div>
       )}
@@ -557,17 +564,17 @@ export default function ImportFlow({ companyId }: ImportFlowProps) {
               alignItems: 'center',
             }}
           >
-            <button
+            <Button
               type='button'
               className='btn btn-primary'
-              disabled={loading || !previewData.can_commit}
+              pending={loading}
+              pendingLabel='Импортируем…'
+              disabled={!previewData.can_commit}
               onClick={handleCommit}
               style={{ minWidth: '180px' }}
             >
-              {loading
-                ? 'Импортируем...'
-                : `Добавить ${previewData.summary.valid_rows} операций`}
-            </button>
+              {`Добавить ${previewData.summary.valid_rows} операций`}
+            </Button>
             <span
               style={{ fontSize: '0.8125rem', color: 'var(--color-muted)' }}
             >

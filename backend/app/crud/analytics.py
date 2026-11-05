@@ -74,7 +74,6 @@ async def get_daily_analytics(
         row[0]: (row[1], row[2]) for row in rows
     }
 
-    # Generate dense daily series from date_from to date_to
     items: list[DailyAnalyticsItem] = []
     total_inflow = Decimal("0.00")
     total_outflow = Decimal("0.00")

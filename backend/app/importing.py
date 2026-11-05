@@ -3,7 +3,7 @@ import io
 import re
 import zipfile
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from xml.etree.ElementTree import ParseError
 
 import openpyxl
@@ -30,14 +30,14 @@ from app.schemas.imports import (
     PreviewSummary,
 )
 
-MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MiB
-MAX_UNCOMPRESSED_XLSX_SIZE = 25 * 1024 * 1024  # 25 MiB
+MAX_FILE_SIZE = 5 * 1024 * 1024
+MAX_UNCOMPRESSED_XLSX_SIZE = 25 * 1024 * 1024
 MAX_ROWS = 5000
 ALLOWED_COLUMNS = {"date", "amount", "direction", "category", "purpose"}
 DECIMAL_REGEX = re.compile(r"^[+-]?\d+(?:\.\d+)?$")
 
 
-def parse_date_str(val: str, is_xlsx: bool = False) -> date:
+def parse_date_str(val: str) -> date:
     cleaned = val.strip()
     if len(cleaned) != 10 or cleaned[4] != "-" or cleaned[7] != "-":
         raise ValueError("Invalid date format")
@@ -56,22 +56,14 @@ def parse_amount_and_direction(
         errors.append("Некорректный формат суммы")
         return None, direction_str or "", errors
 
-    try:
-        raw_dec = Decimal(cleaned_amount)
-    except (InvalidOperation, ValueError):
-        errors.append("Некорректный формат суммы")
-        return None, direction_str or "", errors
-
-    if not raw_dec.is_finite():
-        errors.append("Некорректный формат суммы")
-        return None, direction_str or "", errors
+    raw_dec = Decimal(cleaned_amount)
 
     if raw_dec == 0:
         errors.append("Сумма операции не может быть нулевой")
         return None, direction_str or "", errors
 
     exp = raw_dec.as_tuple().exponent
-    if not isinstance(exp, int) or exp < -2:
+    if exp < -2:
         errors.append("Сумма не должна содержать более двух знаков после запятой")
         return None, direction_str or "", errors
 
@@ -88,31 +80,16 @@ def parse_amount_and_direction(
         )
         return abs_dec, cleaned_dir, errors
 
-    has_plus = cleaned_amount.startswith("+")
-    has_minus = cleaned_amount.startswith("-")
-
-    if cleaned_dir is None:
-        if raw_dec < 0:
-            final_dir = "outflow"
-        else:
-            final_dir = "inflow"
-    else:
-        final_dir = cleaned_dir
-        if is_xlsx:
-            if raw_dec < 0 and final_dir == "inflow":
-                errors.append(
-                    "Отрицательная сумма несовместима с направлением 'inflow'"
-                )
-        else:
-            if has_minus and final_dir == "inflow":
-                errors.append("Явный знак '-' не согласуется с направлением 'inflow'")
-            elif has_plus and final_dir == "outflow":
-                errors.append("Явный знак '+' не согласуется с направлением 'outflow'")
+    final_dir = cleaned_dir or ("outflow" if raw_dec < 0 else "inflow")
+    if raw_dec < 0 and final_dir == "inflow":
+        errors.append("Отрицательная сумма несовместима с направлением 'inflow'")
+    if not is_xlsx and cleaned_amount.startswith("+") and final_dir == "outflow":
+        errors.append("Явный знак '+' не согласуется с направлением 'outflow'")
 
     return abs_dec, final_dir, errors
 
 
-def parse_csv_stream(content_bytes: bytes) -> tuple[list[dict], list[str]]:
+def parse_csv_stream(content_bytes: bytes) -> list[dict]:
     try:
         text = content_bytes.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -120,25 +97,32 @@ def parse_csv_stream(content_bytes: bytes) -> tuple[list[dict], list[str]]:
             "Файл CSV должен быть в кодировке UTF-8 или UTF-8 BOM"
         )
 
-    reader = csv.reader(io.StringIO(text))
-    rows: list[list[str]] = [row for row in reader if any(cell.strip() for cell in row)]
+    return parse_table_rows(list(csv.reader(io.StringIO(text))))
+
+
+def parse_table_rows(rows: list[list[str]], is_xlsx: bool = False) -> list[dict]:
+    rows = [row for row in rows if any(cell.strip() for cell in row)]
 
     if not rows:
-        raise UnprocessableError("CSV файл пуст")
+        raise UnprocessableError("Файл пуст")
 
     headers = [h.strip().lower() for h in rows[0]]
+    while headers and not headers[-1]:
+        headers.pop()
+    if "" in headers:
+        raise UnprocessableError("В файле есть колонка без заголовка")
     if len(headers) != len(set(headers)):
-        raise UnprocessableError("Заголовки колонок CSV содержат дубликаты")
+        raise UnprocessableError("Заголовки колонок содержат дубликаты")
 
     unknown_cols = set(headers) - ALLOWED_COLUMNS
     if unknown_cols:
         raise UnprocessableError(
-            f"Неизвестные заголовки в CSV: {', '.join(unknown_cols)}"
+            f"Неизвестные заголовки: {', '.join(sorted(unknown_cols))}"
         )
 
     if "date" not in headers or "amount" not in headers:
         raise UnprocessableError(
-            "CSV должен содержать обязательные колонки: 'date' и 'amount'"
+            "Файл должен содержать обязательные колонки: 'date' и 'amount'"
         )
 
     if len(rows) - 1 > MAX_ROWS:
@@ -146,16 +130,21 @@ def parse_csv_stream(content_bytes: bytes) -> tuple[list[dict], list[str]]:
 
     parsed_rows: list[dict] = []
     for row_idx, row in enumerate(rows[1:], start=2):
-        row_dict = {}
-        for h_idx, h in enumerate(headers):
-            row_dict[h] = row[h_idx].strip() if h_idx < len(row) else ""
+        if any(cell.strip() for cell in row[len(headers) :]):
+            raise UnprocessableError(f"В строке {row_idx} есть данные без заголовка")
+        row_dict = dict(zip(headers, [cell.strip() for cell in row]))
         row_dict["_row_number"] = row_idx
+        row_dict["_errors"] = (
+            ["Формулы в XLSX не поддерживаются"]
+            if is_xlsx and any(cell.startswith("=") for cell in row)
+            else []
+        )
         parsed_rows.append(row_dict)
 
-    return parsed_rows, []
+    return parsed_rows
 
 
-def parse_xlsx_stream(content_bytes: bytes) -> tuple[list[dict], list[str]]:
+def parse_xlsx_stream(content_bytes: bytes) -> list[dict]:
     try:
         with zipfile.ZipFile(io.BytesIO(content_bytes)) as z:
             infos = z.infolist()
@@ -168,12 +157,6 @@ def parse_xlsx_stream(content_bytes: bytes) -> tuple[list[dict], list[str]]:
                 raise PayloadTooLargeError(
                     "Размер распакованного XLSX файла превышает лимит 25 МБ"
                 )
-            for info in infos:
-                fn = info.filename.lower()
-                if "vbaproject.bin" in fn or "externallinks" in fn:
-                    raise UnprocessableError(
-                        "XLSX содержит макросы или внешние связи, которые не поддерживаются"
-                    )
     except zipfile.BadZipFile:
         raise UnsupportedMediaTypeError("Некорректный формат XLSX файла")
 
@@ -182,6 +165,7 @@ def parse_xlsx_stream(content_bytes: bytes) -> tuple[list[dict], list[str]]:
             filename=io.BytesIO(content_bytes),
             read_only=True,
             data_only=False,
+            keep_links=False,
         )
     except (
         InvalidFileException,
@@ -194,134 +178,26 @@ def parse_xlsx_stream(content_bytes: bytes) -> tuple[list[dict], list[str]]:
         raise UnsupportedMediaTypeError("Не удалось прочитать XLSX файл")
 
     try:
-        sheet_name = "transactions"
-        if sheet_name not in wb.sheetnames:
-            sheet_name = wb.sheetnames[0]
-        sheet = wb[sheet_name]
+        sheet = wb["transactions"] if "transactions" in wb.sheetnames else wb.active
         sheet.reset_dimensions()
-
-        row_iter = sheet.iter_rows(values_only=False)
-        try:
-            first_row = next(row_iter)
-        except StopIteration:
-            raise UnprocessableError("XLSX файл пуст")
-
-        if len(first_row) > 10:
-            raise UnprocessableError(
-                "Превышено максимальное число колонок в XLSX (максимум 10)"
-            )
-
-        header_map: dict[int, str] = {}
-        header_names: list[str] = []
-
-        for c_idx, cell in enumerate(first_row):
-            val = cell.value
-            if cell.data_type == "f" or (
-                isinstance(val, str) and val.strip().startswith("=")
-            ):
-                raise UnprocessableError("Формулы не поддерживаются в заголовках")
-
-            if val is not None and str(val).strip():
-                h_name = str(val).strip().lower()
-                header_map[c_idx] = h_name
-                header_names.append(h_name)
-
-        if not header_names:
-            raise UnprocessableError("В XLSX файле отсутствуют заголовки")
-
-        if len(header_names) != len(set(header_names)):
-            raise UnprocessableError("Заголовки колонок XLSX содержат дубликаты")
-
-        unknown_cols = set(header_names) - ALLOWED_COLUMNS
-        if unknown_cols:
-            raise UnprocessableError(
-                f"Неизвестные заголовки в XLSX: {', '.join(sorted(unknown_cols))}"
-            )
-
-        if "date" not in header_names or "amount" not in header_names:
-            raise UnprocessableError(
-                "XLSX должен содержать обязательные колонки: 'date' и 'amount'"
-            )
-
-        parsed_rows: list[dict] = []
-        visited_rows = 1
-        for row in row_iter:
-            visited_rows += 1
-            if visited_rows > MAX_ROWS + 100:
+        rows: list[list[str]] = []
+        for row_number, row in enumerate(sheet.iter_rows(), start=1):
+            if row_number > MAX_ROWS + 1:
                 raise PayloadTooLargeError(
                     f"Превышено максимальное число строк ({MAX_ROWS})"
                 )
-
             if len(row) > 10:
-                raise UnprocessableError(
-                    f"Превышено максимальное число колонок в строке {visited_rows} (максимум 10)"
-                )
-
-            if not any(c.value is not None and str(c.value).strip() for c in row):
-                continue
-
-            row_dict: dict = {}
-            formula_errors: list[str] = []
-
-            for c_idx, cell in enumerate(row):
-                val = cell.value
-                has_content = val is not None and str(val).strip() != ""
-
-                if c_idx not in header_map:
-                    if has_content:
-                        raise UnprocessableError(
-                            f"Обнаружены данные в колонке без заголовка (колонка {c_idx + 1}, строка {visited_rows})"
-                        )
-                    continue
-
-                h_name = header_map[c_idx]
-
-                if cell.data_type == "f" or (
-                    isinstance(val, str) and val.strip().startswith("=")
-                ):
-                    formula_errors.append(
-                        f"Колонка '{h_name}' содержит формулу, формулы не поддерживаются"
-                    )
-
-                if val is None:
-                    str_val = ""
-                elif isinstance(val, (datetime, date)):
-                    if isinstance(val, datetime) and (
-                        val.hour != 0
-                        or val.minute != 0
-                        or val.second != 0
-                        or val.microsecond != 0
-                    ):
-                        str_val = val.isoformat()
-                    else:
-                        d_val = val.date() if isinstance(val, datetime) else val
-                        str_val = d_val.isoformat()
-                elif isinstance(val, (int, float)):
-                    if isinstance(val, float) and val.is_integer():
-                        str_val = f"{int(val)}"
-                    else:
-                        str_val = str(val).strip()
-                else:
-                    str_val = str(val).strip()
-
-                row_dict[h_name] = str_val
-
-            for h_name in header_names:
-                if h_name not in row_dict:
-                    row_dict[h_name] = ""
-
-            row_dict["_row_number"] = visited_rows
-            row_dict["_formula_errors"] = formula_errors
-            parsed_rows.append(row_dict)
-
-            if len(parsed_rows) > MAX_ROWS:
-                raise PayloadTooLargeError(
-                    f"Превышено максимальное число строк ({MAX_ROWS})"
-                )
+                raise UnprocessableError("В XLSX допускается максимум 10 колонок")
+            values = []
+            for cell in row:
+                value = cell.value
+                if isinstance(value, datetime) and value.time() == datetime.min.time():
+                    value = value.date()
+                values.append(str(value).strip() if value is not None else "")
+            rows.append(values)
+        return parse_table_rows(rows, is_xlsx=True)
     finally:
         wb.close()
-
-    return parsed_rows, []
 
 
 async def preview_import(
@@ -330,16 +206,13 @@ async def preview_import(
     filename: str,
     content_bytes: bytes,
 ) -> PreviewResponse:
-    if len(content_bytes) > MAX_FILE_SIZE:
-        raise PayloadTooLargeError("Размер файла превышает допустимый лимит 5 МБ")
-
     lower_name = filename.lower()
     is_xlsx = False
     if lower_name.endswith(".csv"):
-        raw_rows, _ = parse_csv_stream(content_bytes)
+        raw_rows = parse_csv_stream(content_bytes)
     elif lower_name.endswith(".xlsx"):
         is_xlsx = True
-        raw_rows, _ = parse_xlsx_stream(content_bytes)
+        raw_rows = parse_xlsx_stream(content_bytes)
     else:
         raise UnsupportedMediaTypeError("Поддерживаются только форматы CSV и XLSX")
 
@@ -356,10 +229,11 @@ async def preview_import(
     total_inflow = Decimal("0.00")
     total_outflow = Decimal("0.00")
     dates: list[date] = []
+    today_msk = get_current_moscow_date()
 
     for raw in raw_rows:
         row_num = raw["_row_number"]
-        row_errors: list[str] = []
+        row_errors: list[str] = list(raw["_errors"])
 
         date_val_str = raw.get("date", "")
         amount_val_str = raw.get("amount", "")
@@ -368,12 +242,11 @@ async def preview_import(
         purpose_val = raw.get("purpose", "") or None
 
         parsed_date: date | None = None
-        today_msk = get_current_moscow_date()
         if not date_val_str:
             row_errors.append("Поле 'date' обязательно для заполнения")
         else:
             try:
-                parsed_date = parse_date_str(date_val_str, is_xlsx=is_xlsx)
+                parsed_date = parse_date_str(date_val_str)
                 if parsed_date > today_msk:
                     row_errors.append(
                         f"Дата операции не может быть в будущем (текущая дата: {today_msk.isoformat()})"
@@ -408,24 +281,20 @@ async def preview_import(
                 ):
                     discovered_new_categories[cat_lower] = cat_clean
 
-        if raw.get("_formula_errors"):
-            row_errors.extend(raw["_formula_errors"])
-
         is_valid = len(row_errors) == 0 and norm_amount is not None
-        if is_valid:
+        if is_valid and parsed_date is not None and norm_amount is not None:
             valid_rows_count += 1
-            assert parsed_date is not None
             dates.append(parsed_date)
             if final_direction == "inflow":
                 total_inflow += norm_amount
             else:
                 total_outflow += norm_amount
-            row_amount_display = format_decimal(norm_amount)
         else:
             error_rows_count += 1
-            row_amount_display = (
-                format_decimal(norm_amount) if norm_amount is not None else None
-            )
+
+        row_amount_display = (
+            format_decimal(norm_amount) if norm_amount is not None else None
+        )
 
         row_date_display = parsed_date.isoformat() if parsed_date else date_val_str
         row_dir_display = final_direction if is_valid else (direction_val_str or "")
@@ -458,16 +327,32 @@ async def preview_import(
     )
 
     can_commit = error_rows_count == 0 and valid_rows_count > 0
+    commit_payload = (
+        CommitRequest.model_validate(
+            {
+                "rows": [
+                    row.model_dump(
+                        include={
+                            "operation_date",
+                            "amount",
+                            "direction",
+                            "category",
+                            "purpose",
+                        }
+                    )
+                    for row in preview_rows
+                ]
+            }
+        )
+        if can_commit
+        else None
+    )
 
-    structured_errors: list[ImportPreviewError] = []
-    for r in preview_rows:
-        for err_msg in r.errors:
-            structured_errors.append(
-                ImportPreviewError(
-                    row_number=r.row_number,
-                    message=err_msg,
-                )
-            )
+    structured_errors = [
+        ImportPreviewError(row_number=row.row_number, message=message)
+        for row in preview_rows
+        for message in row.errors
+    ]
 
     return PreviewResponse(
         rows=preview_rows,
@@ -475,6 +360,7 @@ async def preview_import(
         new_categories=sorted(discovered_new_categories.values()),
         summary=summary,
         can_commit=can_commit,
+        commit_payload=commit_payload,
     )
 
 

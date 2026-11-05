@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Index, String
+from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Index, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.connection import Base
@@ -45,6 +45,13 @@ class Invitation(Base):
 
     __table_args__ = (
         Index("ix_invitations_company_email", "company_id", "email"),
+        Index(
+            "uq_invitations_pending_company_email",
+            "company_id",
+            text("lower(email)"),
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
         CheckConstraint(
             "(status = 'pending' AND responded_at IS NULL) OR "
             "(status <> 'pending' AND responded_at IS NOT NULL)",

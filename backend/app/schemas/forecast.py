@@ -1,13 +1,16 @@
 from datetime import date
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import ConfigDict, Field, field_validator
 
 from app.dates import get_current_moscow_date
 from app.schemas.common import StrictModel
 
 
 class ForecastRequest(StrictModel):
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"history_end": "2026-11-05", "horizon_days": 7}}
+    )
     history_end: date
     horizon_days: Literal[7, 30] = 30
 

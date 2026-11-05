@@ -24,31 +24,58 @@ def generate_csrf_token() -> str:
     return secrets.token_hex(32)
 
 
-def create_access_token(user_id: int, csrf_token: str) -> str:
+def create_access_token(
+    user_id: int,
+    csrf_token: str,
+    session_version: int = 0,
+    session_id: str | None = None,
+) -> str:
     settings = get_settings()
-    if not settings.jwt_secret:
-        raise ValueError(
-            "RADAR_JWT_SECRET environment variable is required and cannot be empty"
-        )
-
     now = datetime.now(UTC)
     expire = now + timedelta(minutes=settings.access_token_expire_minutes)
     payload: dict[str, Any] = {
         "sub": str(user_id),
         "csrf": csrf_token,
+        "version": session_version,
         "iat": int(now.timestamp()),
         "exp": int(expire.timestamp()),
+        "type": "access",
     }
+    if session_id is not None:
+        payload["sid"] = session_id
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
 def decode_access_token(token: str) -> dict[str, Any]:
-    settings = get_settings()
-    if not settings.jwt_secret:
-        raise ValueError(
-            "RADAR_JWT_SECRET environment variable is required and cannot be empty"
-        )
+    return decode_token(token, "access")
 
+
+def create_refresh_token(
+    user_id: int,
+    session_id: str,
+    csrf_token: str,
+    session_version: int,
+    expires_at: datetime,
+) -> str:
+    settings = get_settings()
+    return jwt.encode(
+        {
+            "sub": str(user_id),
+            "sid": session_id,
+            "jti": secrets.token_hex(32),
+            "csrf": csrf_token,
+            "version": session_version,
+            "type": "refresh",
+            "iat": int(datetime.now(UTC).timestamp()),
+            "exp": int(expires_at.timestamp()),
+        },
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+    )
+
+
+def decode_token(token: str, token_type: str) -> dict[str, Any]:
+    settings = get_settings()
     try:
         payload = jwt.decode(
             token,
@@ -56,6 +83,13 @@ def decode_access_token(token: str) -> dict[str, Any]:
             algorithms=[settings.jwt_algorithm],
             options={"require": ["exp", "sub"]},
         )
+        if payload.get("type", "access") != token_type:
+            raise jwt.InvalidTokenError("Wrong token type")
+        if token_type == "refresh" and any(
+            not isinstance(payload.get(key), str) or not payload[key]
+            for key in ("sid", "jti", "csrf")
+        ):
+            raise jwt.InvalidTokenError("Missing refresh claims")
         return payload
     except jwt.ExpiredSignatureError:
         raise UnauthorizedError(

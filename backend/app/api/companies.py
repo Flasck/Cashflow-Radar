@@ -1,9 +1,11 @@
+import asyncio
 import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import (
@@ -13,12 +15,11 @@ from app.api.dependencies import (
 )
 from app.api.invitations import invitation_response
 from app.crud.companies import (
-    UNSET,
     create_company_with_owner,
     get_company,
     get_company_last_operation_date,
     list_user_companies,
-    update_company,
+    lock_company,
 )
 from app.crud.invitations import (
     create_invitation,
@@ -26,17 +27,19 @@ from app.crud.invitations import (
     list_invitations,
     require_pending_invitation,
     revoke_invitation,
+    revoke_pending_invitations,
 )
 from app.crud.members import (
-    delete_membership,
     get_membership,
     list_members,
-    update_member_role,
 )
 from app.crud.users import get_user
 from app.db.connection import get_db
+from app.email_verification import send_invitation_email
 from app.errors import ConflictError, ForbiddenError, NotFoundError
+from app.models.company import Company
 from app.models.membership import Membership
+from app.models.transaction import Transaction
 from app.models.user import User
 from app.schemas.companies import (
     CompanyCreate,
@@ -126,19 +129,12 @@ async def update_company_details(
     session: Annotated[AsyncSession, Depends(get_db)],
     _csrf: Annotated[None, Depends(require_csrf)],
 ) -> CompanyResponse:
-    fields_set = payload.model_fields_set
-    name = payload.name if "name" in fields_set else UNSET
-    industry = payload.industry_code if "industry_code" in fields_set else UNSET
-
-    company = await update_company(
-        session=session,
-        company_id=company_id,
-        name=name,
-        industry_code=industry,
-    )
+    company = await get_company(session, company_id)
     if company is None:
         raise NotFoundError(message="Компания не найдена", code="COMPANY_NOT_FOUND")
 
+    for field in payload.model_fields_set:
+        setattr(company, field, getattr(payload, field))
     await session.commit()
     last_op = await get_company_last_operation_date(session, company.id)
     return CompanyResponse(
@@ -150,7 +146,47 @@ async def update_company_details(
     )
 
 
-# --- Members ---
+@router.delete("/{company_id}")
+async def delete_company(
+    company_id: int,
+    _membership: Annotated[Membership, Depends(require_role("owner"))],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    _csrf: Annotated[None, Depends(require_csrf)],
+) -> dict[str, str]:
+    await lock_company(session, company_id)
+    await session.execute(
+        delete(Transaction).where(Transaction.company_id == company_id)
+    )
+    await session.execute(delete(Company).where(Company.id == company_id))
+    await session.commit()
+    return {"status": "ok"}
+
+
+@router.post("/{company_id}/leave")
+async def leave_company(
+    company_id: int,
+    membership: Annotated[
+        Membership, Depends(require_role("owner", "treasurer", "viewer"))
+    ],
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    _csrf: Annotated[None, Depends(require_csrf)],
+) -> dict[str, str]:
+    if membership.role == "owner":
+        raise ConflictError(
+            message="Владелец не может выйти из компании. Удалите компанию.",
+            code="OWNER_CANNOT_LEAVE",
+        )
+    await lock_company(session, company_id)
+    await revoke_pending_invitations(session, company_id, current_user.email)
+    await session.execute(
+        delete(Membership).where(
+            Membership.company_id == company_id,
+            Membership.user_id == current_user.id,
+        )
+    )
+    await session.commit()
+    return {"status": "ok"}
 
 
 @router.get("/{company_id}/members", response_model=list[MemberResponse])
@@ -193,8 +229,7 @@ async def update_member(
             code="CANNOT_MODIFY_OWNER",
         )
 
-    updated = await update_member_role(session, company_id, user_id, payload.role)
-    assert updated is not None
+    target_mem.role = payload.role
     user = await get_user(session, user_id)
     assert user is not None
 
@@ -204,7 +239,7 @@ async def update_member(
         company_id=company_id,
         full_name=user.full_name,
         email=user.email,
-        role=updated.role,
+        role=target_mem.role,
     )
 
 
@@ -216,6 +251,7 @@ async def remove_member(
     session: Annotated[AsyncSession, Depends(get_db)],
     _csrf: Annotated[None, Depends(require_csrf)],
 ) -> dict[str, str]:
+    await lock_company(session, company_id)
     target_mem = await get_membership(session, company_id, user_id)
     if target_mem is None:
         raise NotFoundError(message="Участник не найден", code="MEMBER_NOT_FOUND")
@@ -225,15 +261,12 @@ async def remove_member(
             message="Нельзя удалить владельца компании", code="CANNOT_REMOVE_OWNER"
         )
 
-    deleted = await delete_membership(session, company_id, user_id)
-    if not deleted:
-        raise NotFoundError(message="Участник не найден", code="MEMBER_NOT_FOUND")
-
+    user = await get_user(session, user_id)
+    assert user is not None
+    await revoke_pending_invitations(session, company_id, user.email)
+    await session.delete(target_mem)
     await session.commit()
     return {"status": "ok"}
-
-
-# --- Invitations ---
 
 
 @router.get("/{company_id}/invitations", response_model=list[InvitationResponse])
@@ -258,6 +291,7 @@ async def create_company_invitation(
     session: Annotated[AsyncSession, Depends(get_db)],
     _csrf: Annotated[None, Depends(require_csrf)],
 ) -> InvitationResponse:
+    company = await lock_company(session, company_id)
     all_members = await list_members(session, company_id)
     for _, u in all_members:
         if u.email.lower() == payload.email.lower():
@@ -278,6 +312,7 @@ async def create_company_invitation(
         role=payload.role,
         expires_at=expires_at,
     )
+    await asyncio.to_thread(send_invitation_email, inv.email, company.name)
     await session.commit()
 
     return invitation_response(inv, raw_token)
@@ -295,6 +330,7 @@ async def renew_company_invitation(
     session: Annotated[AsyncSession, Depends(get_db)],
     _csrf: Annotated[None, Depends(require_csrf)],
 ) -> InvitationResponse:
+    company = await lock_company(session, company_id)
     previous = await get_invitation(session, company_id, invitation_id)
     if previous is None:
         raise NotFoundError(
@@ -317,6 +353,7 @@ async def renew_company_invitation(
         previous.role,
         datetime.now(UTC) + timedelta(hours=48),
     )
+    await asyncio.to_thread(send_invitation_email, invitation.email, company.name)
     await session.commit()
     return invitation_response(invitation, token)
 
@@ -329,6 +366,7 @@ async def revoke_company_invitation(
     session: Annotated[AsyncSession, Depends(get_db)],
     _csrf: Annotated[None, Depends(require_csrf)],
 ) -> dict[str, str]:
+    await lock_company(session, company_id)
     deleted = await revoke_invitation(session, company_id, invitation_id)
     if not deleted:
         raise NotFoundError(

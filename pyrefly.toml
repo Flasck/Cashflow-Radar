@@ -1,0 +1,4 @@
+preset = "basic"
+project-includes = ["backend/app", "backend/migrations", "forecast_service", "contracts", "scripts"]
+search-path = [".", "backend"]
+python-interpreter-path = ".venv/Scripts/python.exe"

@@ -4,11 +4,14 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { clientPost, ApiClientError } from '@/lib/api-client'
+import Button from '@/components/ui/Button'
+import { useToast } from '@/components/ui/ToastProvider'
 
 const SESSION_INVITE_TOKEN_KEY = 'radar_invite_token'
 
 export default function InvitePage() {
   const router = useRouter()
+  const notify = useToast()
   const [token, setToken] = useState<string | null>(null)
   const [loading, setLoading] = useState<'accept' | 'decline' | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -59,6 +62,9 @@ export default function InvitePage() {
       sessionStorage.removeItem(SESSION_INVITE_TOKEN_KEY)
       setToken(null)
       setSuccess(action === 'accept' ? 'accepted' : 'declined')
+      notify(
+        action === 'accept' ? 'Приглашение принято' : 'Приглашение отклонено',
+      )
 
       if (action === 'accept') {
         const targetUrl = res.company_id
@@ -147,26 +153,28 @@ export default function InvitePage() {
               сотрудника.
             </p>
 
-            <button
+            <Button
               type='button'
               onClick={() => handleRespond('accept')}
               className='btn btn-primary'
               style={{ width: '100%', marginBottom: 'var(--space-3)' }}
               disabled={loading !== null}
+              pending={loading === 'accept'}
+              pendingLabel='Принятие…'
             >
-              {loading === 'accept' ? 'Принятие...' : 'Принять приглашение'}
-            </button>
-            <button
+              Принять приглашение
+            </Button>
+            <Button
               type='button'
               onClick={() => handleRespond('decline')}
-              className='btn btn-secondary'
+              variant='secondary'
               style={{ width: '100%' }}
               disabled={loading !== null}
+              pending={loading === 'decline'}
+              pendingLabel='Отклонение…'
             >
-              {loading === 'decline'
-                ? 'Отклонение...'
-                : 'Отклонить приглашение'}
-            </button>
+              Отклонить приглашение
+            </Button>
 
             <div
               style={{

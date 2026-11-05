@@ -10,7 +10,7 @@ from app.api.dependencies import (
     require_role,
 )
 from app.db.connection import get_db
-from app.errors import PayloadTooLargeError, UnsupportedMediaTypeError
+from app.errors import PayloadTooLargeError
 from app.importing import MAX_FILE_SIZE, commit_import, preview_import
 from app.models.membership import Membership
 from app.schemas.imports import (
@@ -31,11 +31,10 @@ async def preview_file_import(
     _csrf: Annotated[None, Depends(require_csrf)],
 ) -> PreviewResponse:
     filename = file.filename or "import.csv"
-    content = await file.read()
-    if len(content) > MAX_FILE_SIZE:
-        raise PayloadTooLargeError("Размер файла превышает допустимый лимит 5 МБ")
-
     try:
+        content = await file.read(MAX_FILE_SIZE + 1)
+        if len(content) > MAX_FILE_SIZE:
+            raise PayloadTooLargeError("Размер файла превышает допустимый лимит 5 МБ")
         return await preview_import(
             session=session,
             company_id=company_id,
@@ -56,13 +55,11 @@ async def commit_file_import(
     session: Annotated[AsyncSession, Depends(get_db)],
     _csrf: Annotated[None, Depends(require_csrf)],
 ) -> CommitResponse:
-    result = await commit_import(
+    return await commit_import(
         session=session,
         company_id=company_id,
         request=payload,
     )
-
-    return result
 
 
 @router.get("/template")
@@ -105,5 +102,3 @@ async def download_import_template(
                 "Content-Disposition": 'attachment; filename="transactions_template.xlsx"'
             },
         )
-    else:
-        raise UnsupportedMediaTypeError("Поддерживаются форматы только csv или xlsx")

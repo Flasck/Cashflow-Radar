@@ -32,30 +32,3 @@ async def list_members(
     )
     result = await session.execute(stmt)
     return result.all()
-
-
-async def update_member_role(
-    session: AsyncSession,
-    company_id: int,
-    user_id: int,
-    role: str,
-) -> Membership | None:
-    membership = await get_membership(session, company_id, user_id)
-    if membership is None:
-        return None
-    membership.role = role
-    await session.flush()
-    return membership
-
-
-async def delete_membership(
-    session: AsyncSession,
-    company_id: int,
-    user_id: int,
-) -> bool:
-    membership = await get_membership(session, company_id, user_id)
-    if membership is None:
-        return False
-    await session.delete(membership)
-    await session.flush()
-    return True

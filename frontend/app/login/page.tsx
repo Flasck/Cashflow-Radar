@@ -4,6 +4,10 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { clientPost, ApiClientError } from '@/lib/api-client'
+import Field from '@/components/ui/Field'
+import Input from '@/components/ui/Input'
+import PasswordInput from '@/components/ui/PasswordInput'
+import Button from '@/components/ui/Button'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -87,12 +91,9 @@ export default function LoginPage() {
           </div>
         )}
 
-        <form onSubmit={handleSubmit}>
-          <div className='form-group'>
-            <label className='form-label' htmlFor='email'>
-              Email
-            </label>
-            <input
+        <form onSubmit={handleSubmit} aria-busy={loading}>
+          <Field id='email' label='Email'>
+            <Input
               id='email'
               type='email'
               required
@@ -103,15 +104,11 @@ export default function LoginPage() {
               placeholder='user@example.com'
               disabled={loading}
             />
-          </div>
+          </Field>
 
-          <div className='form-group'>
-            <label className='form-label' htmlFor='password'>
-              Пароль
-            </label>
-            <input
+          <Field id='password' label='Пароль'>
+            <PasswordInput
               id='password'
-              type='password'
               required
               autoComplete='current-password'
               value={password}
@@ -120,16 +117,17 @@ export default function LoginPage() {
               placeholder='••••••••'
               disabled={loading}
             />
-          </div>
+          </Field>
 
-          <button
+          <Button
             type='submit'
             className='btn btn-primary'
             style={{ width: '100%', marginTop: 'var(--space-3)' }}
-            disabled={loading}
+            pending={loading}
+            pendingLabel='Вход…'
           >
-            {loading ? 'Вход...' : 'Войти'}
-          </button>
+            Войти
+          </Button>
         </form>
 
         <div

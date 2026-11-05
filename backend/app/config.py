@@ -14,16 +14,13 @@ class Settings(BaseSettings):
         default="postgresql+asyncpg://radar:radar@localhost:55432/cashflow_radar",
         validation_alias=AliasChoices("RADAR_DATABASE_URL", "DATABASE_URL"),
     )
-    test_database_url: str | None = Field(
-        default=None,
-        validation_alias="RADAR_TEST_DATABASE_URL",
-    )
     jwt_secret: str = Field(
         validation_alias="RADAR_JWT_SECRET",
         min_length=32,
     )
     jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 60
+    access_token_expire_minutes: int = Field(default=15, ge=1)
+    refresh_token_expire_days: int = Field(default=7, ge=1)
 
     smtp_host: str = Field(default="smtp.mail.ru", validation_alias="RADAR_SMTP_HOST")
     smtp_port: int = Field(
@@ -45,7 +42,6 @@ class Settings(BaseSettings):
             "FORECAST_GRPC_TARGET", "RADAR_FORECAST_GRPC_TARGET"
         ),
     )
-    api_port: int = 8000
 
     @property
     def allowed_origins(self) -> list[str]:

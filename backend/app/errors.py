@@ -126,7 +126,6 @@ async def validation_error_handler(
         loc = err.get("loc", ())
         path_parts = [str(part) for part in loc if part != "body"]
         field_path = ".".join(path_parts) if path_parts else "request"
-        # Never echo user input (e.g. passwords, credit card numbers, tokens)
         fields[field_path] = str(err.get("msg", "Некорректное значение"))
 
     return JSONResponse(
@@ -144,7 +143,6 @@ async def validation_error_handler(
 async def unhandled_exception_handler(
     _request: Request, exc: Exception
 ) -> JSONResponse:
-    # Log sanitized warning without leaking credentials or database connection strings
     logger.error(
         "Внутренняя непредвиденная ошибка при обработке запроса: %s", type(exc).__name__
     )

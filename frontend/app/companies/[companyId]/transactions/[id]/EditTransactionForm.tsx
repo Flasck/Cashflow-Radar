@@ -6,6 +6,10 @@ import Link from 'next/link'
 import type { Category, Transaction, TransactionDirection } from '@/lib/types'
 import { parseSignedMoney, formatMoneyRub } from '@/lib/money'
 import { clientPatch, clientDelete, ApiClientError } from '@/lib/api-client'
+import Input from '@/components/ui/Input'
+import Select from '@/components/ui/Select'
+import Button from '@/components/ui/Button'
+import { useToast } from '@/components/ui/ToastProvider'
 
 interface EditTransactionFormProps {
   companyId: number
@@ -21,6 +25,7 @@ export default function EditTransactionForm({
   todayMoscow,
 }: EditTransactionFormProps) {
   const router = useRouter()
+  const notify = useToast()
 
   const [operationDate, setOperationDate] = useState(transaction.operation_date)
   const [rawAmount, setRawAmount] = useState(
@@ -87,6 +92,7 @@ export default function EditTransactionForm({
         },
       )
 
+      notify('Операция сохранена')
       router.push(`/companies/${companyId}/transactions`)
       router.refresh()
     } catch (err) {
@@ -108,6 +114,7 @@ export default function EditTransactionForm({
       await clientDelete(
         `/api/companies/${companyId}/transactions/${transaction.id}`,
       )
+      notify('Операция удалена')
       router.push(`/companies/${companyId}/transactions`)
       router.refresh()
     } catch (err) {
@@ -182,19 +189,20 @@ export default function EditTransactionForm({
             ?
           </p>
           <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-            <button
+            <Button
               type='button'
-              className='btn btn-danger'
+              variant='danger'
               style={{
                 padding: '6px 14px',
                 minHeight: '34px',
                 fontSize: '0.875rem',
               }}
               onClick={handleDelete}
-              disabled={loading}
+              pending={loading}
+              pendingLabel='Удаление…'
             >
-              {loading ? 'Удаление...' : 'Да, удалить безвозвратно'}
-            </button>
+              Да, удалить безвозвратно
+            </Button>
             <button
               type='button'
               className='btn btn-secondary'
@@ -222,13 +230,13 @@ export default function EditTransactionForm({
         </div>
       )}
 
-      <form onSubmit={handleSave}>
+      <form onSubmit={handleSave} aria-busy={loading}>
         {/* Date */}
         <div className='form-group'>
           <label className='form-label' htmlFor='txDate'>
             Дата операции *
           </label>
-          <input
+          <Input
             id='txDate'
             type='date'
             required
@@ -257,6 +265,7 @@ export default function EditTransactionForm({
               className={`btn ${direction === 'inflow' ? 'btn-primary' : 'btn-secondary'}`}
               style={{ flex: 1, minHeight: '36px', fontSize: '0.875rem' }}
               onClick={() => handleDirectionToggle('inflow')}
+              disabled={loading}
             >
               + Поступление
             </button>
@@ -265,12 +274,13 @@ export default function EditTransactionForm({
               className={`btn ${direction === 'outflow' ? 'btn-primary' : 'btn-secondary'}`}
               style={{ flex: 1, minHeight: '36px', fontSize: '0.875rem' }}
               onClick={() => handleDirectionToggle('outflow')}
+              disabled={loading}
             >
               − Выплата
             </button>
           </div>
 
-          <input
+          <Input
             id='txAmount'
             type='text'
             required
@@ -291,7 +301,7 @@ export default function EditTransactionForm({
           <label className='form-label' htmlFor='txCategory'>
             Категория
           </label>
-          <select
+          <Select
             id='txCategory'
             className='form-select'
             value={categoryId}
@@ -304,7 +314,7 @@ export default function EditTransactionForm({
                 {c.name}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
 
         {/* Purpose */}
@@ -312,7 +322,7 @@ export default function EditTransactionForm({
           <label className='form-label' htmlFor='txPurpose'>
             Назначение платежа
           </label>
-          <input
+          <Input
             id='txPurpose'
             type='text'
             maxLength={500}
@@ -330,14 +340,15 @@ export default function EditTransactionForm({
             marginTop: 'var(--space-5)',
           }}
         >
-          <button
+          <Button
             type='submit'
             className='btn btn-primary'
             style={{ minWidth: '140px' }}
-            disabled={loading}
+            pending={loading}
+            pendingLabel='Сохранение…'
           >
-            {loading ? 'Сохранение...' : 'Сохранить изменения'}
-          </button>
+            Сохранить изменения
+          </Button>
           <Link
             href={`/companies/${companyId}/transactions`}
             className='btn btn-secondary'

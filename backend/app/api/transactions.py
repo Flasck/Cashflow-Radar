@@ -10,14 +10,13 @@ from app.api.dependencies import (
 )
 from app.crud.categories import get_category
 from app.crud.transactions import (
-    UNSET,
     create_transaction,
     delete_transaction,
     get_transaction,
     get_transaction_with_category,
     list_transactions,
-    update_transaction,
 )
+from app.dates import get_current_moscow_date
 from app.db.connection import get_db
 from app.errors import NotFoundError, UnprocessableError
 from app.models.membership import Membership
@@ -30,9 +29,6 @@ from app.schemas.transactions import (
 )
 
 router = APIRouter(prefix="/companies/{company_id}/transactions", tags=["transactions"])
-
-
-from app.dates import get_current_moscow_date
 
 
 def _format_tx_response(tx, cat_name: str | None = None) -> TransactionResponse:
@@ -174,46 +170,26 @@ async def edit_transaction(
             code="FUTURE_DATE_NOT_ALLOWED",
         )
 
-    cat_name = None
-    fields_set = payload.model_fields_set
-
-    # Handle category_id
-    if "category_id" in fields_set:
-        if payload.category_id is not None:
-            cat = await get_category(session, company_id, payload.category_id)
-            if cat is None:
-                raise UnprocessableError(
-                    message="Указанная категория не найдена в данной компании",
-                    code="CATEGORY_NOT_FOUND",
-                )
-            cat_name = cat.name
-        else:
-            cat_name = None
-    else:
-        if existing.category_id is not None:
-            cat = await get_category(session, company_id, existing.category_id)
-            cat_name = cat.name if cat else None
-
-    op_date = payload.operation_date if "operation_date" in fields_set else UNSET
-    amt = payload.amount if "amount" in fields_set else UNSET
-    direction = payload.direction if "direction" in fields_set else UNSET
-    cat_id = payload.category_id if "category_id" in fields_set else UNSET
-    purpose = payload.purpose if "purpose" in fields_set else UNSET
-
-    tx = await update_transaction(
-        session=session,
-        company_id=company_id,
-        transaction_id=transaction_id,
-        operation_date=op_date,
-        amount=amt,
-        direction=direction,
-        category_id=cat_id,
-        purpose=purpose,
+    category_id = (
+        payload.category_id
+        if "category_id" in payload.model_fields_set
+        else existing.category_id
     )
-    assert tx is not None
+    cat_name = None
+    if category_id is not None:
+        category = await get_category(session, company_id, category_id)
+        if category is None:
+            raise UnprocessableError(
+                message="Указанная категория не найдена в данной компании",
+                code="CATEGORY_NOT_FOUND",
+            )
+        cat_name = category.name
+
+    for field in payload.model_fields_set:
+        setattr(existing, field, getattr(payload, field))
     await session.commit()
 
-    return _format_tx_response(tx, cat_name)
+    return _format_tx_response(existing, cat_name)
 
 
 @router.delete("/{transaction_id}")

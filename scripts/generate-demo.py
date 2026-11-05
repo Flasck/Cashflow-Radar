@@ -1,5 +1,3 @@
-"""Generate fictional RUB payments for the educational UI, never research data."""
-
 import argparse
 import csv
 from datetime import datetime, timedelta
@@ -8,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="Generate fictional RUB payments")
     parser.add_argument(
         "--output", type=Path, default=Path("artifacts/demo-transactions.csv")
     )

@@ -14,3 +14,4 @@ frontend/tsconfig.tsbuildinfo
 **/.pytest_cache/
 **/.ruff_cache/
 artifacts/
+.local-checks/
