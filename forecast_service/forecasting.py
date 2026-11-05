@@ -15,24 +15,18 @@ def validate_history_and_horizon(
     horizon_days: int,
 ) -> tuple[list[datetime.date], list[int], list[str]]:
     if len(history) < MIN_HISTORY_DAYS or len(history) > MAX_HISTORY_DAYS:
-        raise ValueError(
-            f"History length must be between {MIN_HISTORY_DAYS} and {MAX_HISTORY_DAYS} "
-            f"calendar days, got {len(history)}"
-        )
+        raise ValueError("History must contain 30..1825 days")
 
     if horizon_days not in ALLOWED_HORIZONS:
-        raise ValueError(f"horizon_days must be 7 or 30, got {horizon_days}")
+        raise ValueError("Horizon must be 7 or 30")
 
-    try:
-        parsed_dates = [datetime.date.fromisoformat(point.date) for point in history]
-    except ValueError:
-        raise ValueError("Invalid date format. Expected YYYY-MM-DD") from None
-
-    for index, day in enumerate(parsed_dates):
-        if history[index].date != day.isoformat():
-            raise ValueError("Invalid date format. Expected strict YYYY-MM-DD")
-        if day != parsed_dates[0] + datetime.timedelta(days=index):
-            raise ValueError("History dates must be strictly consecutive calendar days")
+    parsed_dates = [datetime.date.fromisoformat(point.date) for point in history]
+    expected_dates = [
+        (parsed_dates[0] + datetime.timedelta(days=index)).isoformat()
+        for index in range(len(history))
+    ]
+    if [point.date for point in history] != expected_dates:
+        raise ValueError("Dates must be consecutive YYYY-MM-DD")
 
     minor_values = [point.net_cash_flow_minor for point in history]
 

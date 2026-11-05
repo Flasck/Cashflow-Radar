@@ -110,7 +110,7 @@ Python-клиент выполняется в контейнере API и обр
 
 - `Predict(horizon_days=7) -> OK` и семь точек;
 - `Predict(horizon_days=30) -> OK` и тридцать точек;
-- `Predict(horizon_days=14) -> INVALID_ARGUMENT: horizon_days must be 7 or 30, got 14`.
+- `Predict(horizon_days=14) -> INVALID_ARGUMENT: Horizon must be 7 or 30`.
 
 Оба успешных ответа проверяются по длине, последовательности дат, наличию версии алгоритма и совпадению со средним последних 7 дней. Это демонстрация транспорта и вычисления, **не проверка точности прогноза**.
 

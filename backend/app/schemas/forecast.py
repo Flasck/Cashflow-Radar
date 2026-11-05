@@ -19,9 +19,7 @@ class ForecastRequest(StrictModel):
     def check_history_end(cls, v: date) -> date:
         today_msk = get_current_moscow_date()
         if v > today_msk:
-            raise ValueError(
-                f"Дата history_end не может быть в будущем (текущая дата: {today_msk.isoformat()})"
-            )
+            raise ValueError("history_end не может быть в будущем")
         return v
 
 

@@ -24,14 +24,6 @@ class ForecastServiceServicer(forecast_pb2_grpc.ForecastServiceServicer):
         request: forecast_pb2.PredictRequest,
         context: grpc.ServicerContext,
     ) -> forecast_pb2.PredictResponse:
-        try:
-            parsed_dates, minor_values, warnings = validate_history_and_horizon(
-                request.history, request.horizon_days
-            )
-        except ValueError as err:
-            logger.info("Validation rejected Predict request: %s", err)
-            context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(err))
-
         logger.info(
             "Predict received: history_days=%d, horizon_days=%d",
             len(request.history),
@@ -39,15 +31,15 @@ class ForecastServiceServicer(forecast_pb2_grpc.ForecastServiceServicer):
         )
 
         try:
-            forecast_results = run_forecast(
-                history_dates=parsed_dates,
-                history_minor=minor_values,
-                horizon_days=request.horizon_days,
+            parsed_dates, minor_values, warnings = validate_history_and_horizon(
+                request.history, request.horizon_days
             )
-        except Exception:
-            logger.exception("Unexpected error during forecasting")
-            context.abort(grpc.StatusCode.INTERNAL, "Internal forecasting error")
+        except ValueError as err:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(err))
 
+        forecast_results = run_forecast(
+            parsed_dates, minor_values, request.horizon_days
+        )
         response = forecast_pb2.PredictResponse(
             forecast=[
                 forecast_pb2.DailyPoint(date=day, net_cash_flow_minor=amount)
@@ -66,10 +58,7 @@ class ForecastServiceServicer(forecast_pb2_grpc.ForecastServiceServicer):
 
 def serve() -> None:
     port = os.getenv("FORECAST_PORT", "50051")
-    server = grpc.server(
-        futures.ThreadPoolExecutor(max_workers=2),
-        maximum_concurrent_rpcs=2,
-    )
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
     forecast_pb2_grpc.add_ForecastServiceServicer_to_server(
         ForecastServiceServicer(), server
     )

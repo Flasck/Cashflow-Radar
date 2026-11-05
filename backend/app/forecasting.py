@@ -54,21 +54,18 @@ async def get_dense_history_series(
     bounds = await session.execute(bounds_stmt)
     earliest_date, last_operation_date = bounds.one()
 
-    if earliest_date is None:
+    if (
+        earliest_date is None
+        or (history_end - earliest_date).days + 1 < MIN_HISTORY_DAYS
+    ):
         raise UnprocessableError(
-            message="Нужно минимум 30 календарных дней истории",
+            message="Нужно 30 дней истории",
             code="INSUFFICIENT_HISTORY",
         )
 
     warnings: list[str] = []
     history_start = earliest_date
     total_calendar_days = (history_end - history_start).days + 1
-
-    if total_calendar_days < MIN_HISTORY_DAYS:
-        raise UnprocessableError(
-            message=f"Нужно минимум 30 календарных дней истории (найдено: {total_calendar_days})",
-            code="INSUFFICIENT_HISTORY",
-        )
 
     if total_calendar_days > MAX_HISTORY_DAYS:
         history_start = history_end - timedelta(days=MAX_HISTORY_DAYS - 1)
@@ -133,9 +130,7 @@ async def predict_history(
     for dt, net_cf in dense_history:
         kopecks = round(net_cf * 100)
         if kopecks > 9223372036854775807 or kopecks < -9223372036854775808:
-            raise UnprocessableError(
-                "Дневная сумма превышает допустимый предел для расчета прогноза"
-            )
+            raise UnprocessableError("Дневная сумма слишком велика")
         history_points.append(
             forecast_pb2.DailyPoint(
                 date=dt.isoformat(),
@@ -166,21 +161,15 @@ async def predict_history(
     except grpc.aio.AioRpcError as rpc_err:
         code = rpc_err.code()
         logger.warning("gRPC Predict failed: status=%s", code.name)
-        details = rpc_err.details() or "Ошибка сервиса прогнозирования"
         if code == grpc.StatusCode.INVALID_ARGUMENT:
-            raise UnprocessableError(message=details, code="INVALID_ARGUMENT")
-        elif code in (grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.RESOURCE_EXHAUSTED):
-            raise ServiceUnavailableError(
-                message=f"Сервис прогнозирования временно недоступен: {details}"
-            )
-        elif code == grpc.StatusCode.DEADLINE_EXCEEDED:
-            raise GatewayTimeoutError(
-                message="Превышено время ожидания ответа от сервиса прогнозирования (30 с)"
-            )
-        else:
-            raise BadGatewayError(
-                message=f"Ошибка сервиса прогнозирования: {details}",
-            )
+            raise UnprocessableError(
+                "Неверные данные прогноза", code="INVALID_ARGUMENT"
+            ) from None
+        if code in (grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.RESOURCE_EXHAUSTED):
+            raise ServiceUnavailableError("Engine недоступен") from None
+        if code == grpc.StatusCode.DEADLINE_EXCEEDED:
+            raise GatewayTimeoutError("Engine не ответил за 30 с") from None
+        raise BadGatewayError("Ошибка Engine") from None
 
     logger.info(
         "gRPC received PredictResponse: forecast_points=%d, model=%s, protobuf_bytes=%d",
@@ -189,18 +178,12 @@ async def predict_history(
         response.ByteSize(),
     )
 
-    if len(response.forecast) != horizon_days:
-        raise BadGatewayError(
-            message=f"Некорректное число точек прогноза: ожидалось {horizon_days}, получено {len(response.forecast)}",
-        )
-
-    expected_date = history_end + timedelta(days=1)
-    for i, pt in enumerate(response.forecast):
-        if pt.date != expected_date.isoformat():
-            raise BadGatewayError(
-                message=f"Некорректная дата точки прогноза #{i + 1}: ожидалось {expected_date.isoformat()}, получено {pt.date}",
-            )
-        expected_date += timedelta(days=1)
+    expected_dates = [
+        (history_end + timedelta(days=day)).isoformat()
+        for day in range(1, horizon_days + 1)
+    ]
+    if [point.date for point in response.forecast] != expected_dates:
+        raise BadGatewayError("Неверные даты прогноза")
 
     combined_warnings = list(dict.fromkeys([*(api_warnings or []), *response.warnings]))
 
